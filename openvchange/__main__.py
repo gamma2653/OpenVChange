@@ -173,6 +173,10 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         button_layout.addWidget(self.stop_button)
 
+        self.reset_button = QPushButton("Reset to Defaults")
+        self.reset_button.clicked.connect(self.on_reset_defaults)
+        button_layout.addWidget(self.reset_button)
+
         layout.addLayout(button_layout)
 
         # Status label
@@ -252,6 +256,21 @@ class MainWindow(QMainWindow):
     def on_ng_changed(self, value):
         self.ng_label.setText(f"{value}%")
         self.audio_processor.set_noise_gate_threshold(value)
+
+    def on_reset_defaults(self):
+        """Reset all filter settings to their default values."""
+        # Disable filters first
+        self.hp_checkbox.setChecked(False)
+        self.lp_checkbox.setChecked(False)
+        self.ng_checkbox.setChecked(False)
+
+        # Reset slider values
+        self.gain_slider.setValue(0)
+        self.bass_slider.setValue(0)
+        self.treble_slider.setValue(0)
+        self.hp_slider.setValue(80)
+        self.lp_slider.setValue(16000)
+        self.ng_slider.setValue(1)
 
     def update_level_meter(self, level):
         """Update the input level meter."""
