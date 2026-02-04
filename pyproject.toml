@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "openvchange"
+version = "0.1.0"
+description = ""
+authors = []
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.15"
+pyaudio = "^0.2.14"
+pyside6 = "^6.6.0"
+numpy = "^1.26.0"
+scipy = "^1.11.0"
+
+[tool.poetry.scripts]
+openvchange = "openvchange.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
