@@ -52,7 +52,7 @@ This routes your microphone through OpenVChange's processing pipeline and into w
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/openvchange.git
+git clone https://github.com/gamma2653/openvchange.git
 cd openvchange
 
 # Install with Poetry
