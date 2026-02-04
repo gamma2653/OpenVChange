@@ -262,7 +262,7 @@ class AudioProcessor(QObject):
             nyquist = self.sample_rate / 2
             low = self.low_cut / nyquist
             if low < 1.0:
-                b, a = signal.butter(2, low, btype="high")
+                b, a = signal.butter(2, low, btype="high")  # type: ignore[attr-defined]
                 data = self.apply_filter_with_state(b, a, data, "highpass")
         elif "highpass" in self.filter_states:
             del self.filter_states["highpass"]
@@ -272,7 +272,7 @@ class AudioProcessor(QObject):
             nyquist = self.sample_rate / 2
             high = self.high_cut / nyquist
             if high < 1.0:
-                b, a = signal.butter(2, high, btype="low")
+                b, a = signal.butter(2, high, btype="low")  # type: ignore[attr-defined]
                 data = self.apply_filter_with_state(b, a, data, "lowpass")
         elif "lowpass" in self.filter_states:
             del self.filter_states["lowpass"]
