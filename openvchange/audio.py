@@ -39,6 +39,17 @@ class AudioProcessor(QObject):
         self.bass_freq = 250
         self.treble_freq = 4000
 
+        # Pitch shift (in semitones, 0 = no change)
+        self.pitch_semitones = 0.0
+        self.pitch_window_size = 2048
+        self.pitch_buffer_size = 8192
+        self.pitch_buffer = np.zeros(self.pitch_buffer_size, dtype=np.float32)
+        self.pitch_write_pos = 0
+        # Use 4 overlapping read pointers for smoother output
+        self.pitch_num_voices = 4
+        self.pitch_read_pos = [0.0] * self.pitch_num_voices
+        self.pitch_fade_pos = [i / self.pitch_num_voices for i in range(self.pitch_num_voices)]
+
         self.pa = pyaudio.PyAudio()
 
     def set_input_device(self, device_index):
@@ -119,6 +130,80 @@ class AudioProcessor(QObject):
 
     def set_treble(self, gain_db):
         self.treble_gain = gain_db
+
+    def set_pitch(self, semitones):
+        """Set pitch shift in semitones (-12 to +12)."""
+        self.pitch_semitones = semitones
+
+    def apply_pitch_shift(self, data):
+        """Apply pitch shift using multi-pointer delay line with crossfade.
+
+        Multiple read pointers traverse a circular buffer at the shifted rate.
+        Each pointer has an independent fade phase that controls its amplitude.
+        When a pointer's fade reaches zero, it resets to a new position.
+        More pointers = smoother sound with less artifacts.
+        """
+        if abs(self.pitch_semitones) < 0.1:
+            return data
+
+        shift_factor = 2 ** (self.pitch_semitones / 12.0)
+        window_size = self.pitch_window_size
+        buf_size = self.pitch_buffer_size
+        num_voices = self.pitch_num_voices
+
+        # Fade phase increment per sample
+        fade_inc = 1.0 / window_size
+
+        output = np.zeros(len(data), dtype=np.float32)
+
+        for i in range(len(data)):
+            # Write input to circular buffer
+            self.pitch_buffer[self.pitch_write_pos] = data[i]
+
+            # Process all voices
+            mixed_sample = 0.0
+            total_weight = 0.0
+
+            for v in range(num_voices):
+                # Read with linear interpolation
+                idx = int(self.pitch_read_pos[v]) % buf_size
+                frac = self.pitch_read_pos[v] - int(self.pitch_read_pos[v])
+                sample = (self.pitch_buffer[idx] * (1 - frac) +
+                         self.pitch_buffer[(idx + 1) % buf_size] * frac)
+
+                # Hann window for crossfade
+                fade = 0.5 * (1.0 - np.cos(2.0 * np.pi * self.pitch_fade_pos[v]))
+
+                mixed_sample += sample * fade
+                total_weight += fade
+
+                # Advance read position at shifted rate
+                self.pitch_read_pos[v] += shift_factor
+
+                # Wrap read position
+                if self.pitch_read_pos[v] >= buf_size:
+                    self.pitch_read_pos[v] -= buf_size
+                elif self.pitch_read_pos[v] < 0:
+                    self.pitch_read_pos[v] += buf_size
+
+                # Advance fade position
+                self.pitch_fade_pos[v] += fade_inc
+
+                # Reset when fade cycle completes
+                if self.pitch_fade_pos[v] >= 1.0:
+                    self.pitch_fade_pos[v] -= 1.0
+                    self.pitch_read_pos[v] = float((self.pitch_write_pos - buf_size // 2) % buf_size)
+
+            # Output mixed sample
+            if total_weight > 0.001:
+                output[i] = mixed_sample / total_weight
+            else:
+                output[i] = 0.0
+
+            # Advance write position
+            self.pitch_write_pos = (self.pitch_write_pos + 1) % buf_size
+
+        return output
 
     def make_shelf_filter(self, freq, gain_db, filter_type="low"):
         """Create a shelf filter using biquad coefficients.
@@ -206,6 +291,10 @@ class AudioProcessor(QObject):
         elif "treble" in self.filter_states:
             del self.filter_states["treble"]
 
+        # Apply pitch shift
+        if abs(self.pitch_semitones) >= 0.1:
+            data = self.apply_pitch_shift(data)
+
         # Apply gain
         data = data * self.gain
 
@@ -234,6 +323,10 @@ class AudioProcessor(QObject):
         try:
             self.sample_rate = self.find_common_sample_rate()
             self.filter_states = {}
+            self.pitch_buffer = np.zeros(self.pitch_buffer_size, dtype=np.float32)
+            self.pitch_write_pos = self.pitch_buffer_size // 2
+            self.pitch_read_pos = [0.0] * self.pitch_num_voices
+            self.pitch_fade_pos = [i / self.pitch_num_voices for i in range(self.pitch_num_voices)]
 
             # Use full-duplex stream for synchronized I/O
             self.stream = self.pa.open(

@@ -28,7 +28,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenVChange - Virtual Audio Router")
-        self.setMinimumSize(500, 480)
+        self.setMinimumSize(500, 520)
 
         self.audio_processor = AudioProcessor()
         self.audio_processor.level_changed.connect(self.update_level_meter)
@@ -99,6 +99,19 @@ class MainWindow(QMainWindow):
         self.treble_label.setMinimumWidth(70)
         treble_layout.addWidget(self.treble_label)
         filters_layout.addLayout(treble_layout)
+
+        # Pitch control
+        pitch_layout = QHBoxLayout()
+        pitch_layout.addWidget(QLabel("Pitch:"))
+        self.pitch_slider = QSlider(Qt.Horizontal)
+        self.pitch_slider.setRange(-120, 120)  # -12 to +12 semitones (x10 for precision)
+        self.pitch_slider.setValue(0)
+        self.pitch_slider.valueChanged.connect(self.on_pitch_changed)
+        pitch_layout.addWidget(self.pitch_slider)
+        self.pitch_label = QLabel("0 st")
+        self.pitch_label.setMinimumWidth(70)
+        pitch_layout.addWidget(self.pitch_label)
+        filters_layout.addLayout(pitch_layout)
 
         # High-pass filter
         hp_layout = QHBoxLayout()
@@ -233,6 +246,11 @@ class MainWindow(QMainWindow):
         self.treble_label.setText(f"{value} dB")
         self.audio_processor.set_treble(value)
 
+    def on_pitch_changed(self, value):
+        semitones = value / 10.0  # Convert from slider units to semitones
+        self.pitch_label.setText(f"{semitones:.1f} st")
+        self.audio_processor.set_pitch(semitones)
+
     def on_hp_toggled(self, checked):
         self.hp_slider.setEnabled(checked)
         self.audio_processor.high_pass_enabled = checked
@@ -268,6 +286,7 @@ class MainWindow(QMainWindow):
         self.gain_slider.setValue(0)
         self.bass_slider.setValue(0)
         self.treble_slider.setValue(0)
+        self.pitch_slider.setValue(0)
         self.hp_slider.setValue(80)
         self.lp_slider.setValue(16000)
         self.ng_slider.setValue(1)
