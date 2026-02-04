@@ -1,26 +1,52 @@
 # OpenVChange
 
-A virtual audio routing and processing application for real-time audio manipulation between devices.
-
-## Overview
-
-OpenVChange captures audio from an input device, applies configurable real-time filters and effects, and routes the processed audio to an output device. It functions as a software audio mixer with integrated DSP capabilities.
+A virtual audio routing and real-time DSP application for Windows. Captures audio from an input device, applies configurable effects and filters, and routes the processed audio to an output device via a PySide6 GUI.
 
 ## Features
 
-- **Audio Routing**: Route audio between any input/output devices on your system
-- **Gain Control**: Adjust volume from -20 to +20 dB
-- **Equalizer**: Bass and treble shelf filters (±12 dB)
-- **High-Pass Filter**: Remove low frequencies (20-500 Hz, Butterworth design)
-- **Low-Pass Filter**: Remove high frequencies (1000-20000 Hz, Butterworth design)
-- **Noise Gate**: Threshold-based noise suppression
-- **Level Meter**: Real-time visual feedback of input audio levels
-- **Clipping Protection**: Prevents audio distortion
+### Audio Routing
+- Route audio between any input and output devices on your system
+- WASAPI device filtering by default for low-latency on Windows, with an option to show all devices
+- Automatic sample rate detection and negotiation between input/output devices
+
+### Real-Time DSP Effects
+- **Gain**: -20 to +20 dB volume adjustment
+- **Bass Shelf EQ**: ±12 dB at 250 Hz (biquad shelving filter)
+- **Treble Shelf EQ**: ±12 dB at 4000 Hz (biquad shelving filter)
+- **Pitch Shift**: -12 to +12 semitones using a 4-voice delay-line algorithm with Hann window crossfade for artifact-free shifting
+- **High-Pass Filter**: 20–500 Hz cutoff (2nd-order Butterworth)
+- **Low-Pass Filter**: 1000–20000 Hz cutoff (2nd-order Butterworth)
+- **Noise Gate**: RMS-based threshold gating (0–20%)
+
+### Interface
+- Real-time input level meter
+- Per-filter enable/disable checkboxes (HP, LP, Noise Gate)
+- Reset to Defaults button to restore all parameters
+- Status display showing running/stopped state
+
+### Signal Quality
+- Stateful filtering using `scipy.lfilter` with `lfilter_zi` — no clicks or pops between audio chunks
+- Soft clipping to prevent digital distortion
+- Full-duplex callback-based streaming for minimal latency
+
+## Recommended Setup: VB-Audio Virtual Cable
+
+To route processed audio into other applications (Discord, OBS, games, etc.), install **[VB-Audio Virtual Cable](https://vb-audio.com/Cable/)**. This creates a virtual audio device that acts as a bridge:
+
+1. Download and install [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free)
+2. Restart your computer after installation
+3. In OpenVChange:
+   - Set your **Input** to your physical microphone
+   - Set your **Output** to **CABLE Input (VB-Audio Virtual Cable)**
+4. In your target application (Discord, OBS, etc.):
+   - Set the input/microphone to **CABLE Output (VB-Audio Virtual Cable)**
+
+This routes your microphone through OpenVChange's processing pipeline and into whatever application you choose.
 
 ## Requirements
 
 - Python 3.10 or higher
-- Windows/macOS/Linux with audio devices
+- Windows (WASAPI support); macOS/Linux may work but are untested
 
 ## Installation
 
@@ -36,7 +62,6 @@ poetry install
 ## Usage
 
 ```bash
-# Run the application
 poetry run openvchange
 ```
 
@@ -48,24 +73,34 @@ openvchange
 
 ### Controls
 
-1. **Select Devices**: Choose your input and output audio devices from the dropdowns
-2. **Configure Filters**: Adjust sliders and toggles to set your desired processing
-3. **Start**: Click "Start" to begin audio routing
-4. **Stop**: Click "Stop" to end processing
+1. **Select Devices** — Choose input and output audio devices from the dropdowns
+2. **Configure Effects** — Adjust sliders and enable/disable filters
+3. **Start** — Begin audio routing and processing
+4. **Stop** — End processing
+5. **Reset to Defaults** — Restore all parameters to neutral values
 
 ## Technical Details
 
-- **Sample Rate**: 44.1 kHz
-- **Buffer Size**: 1024 samples
-- **Audio Format**: 16-bit PCM
-- **Filter Design**: Biquad shelf filters (EQ), 2nd-order Butterworth (HP/LP)
+| Parameter | Value |
+|-----------|-------|
+| Sample Rate | 44100 Hz (auto-detected) |
+| Buffer Size | 1024 samples |
+| Audio Format | 16-bit PCM (int16) |
+| Channels | Mono |
+| HP/LP Filters | 2nd-order Butterworth |
+| EQ Filters | Biquad shelving (Bristow-Johnson) |
+| Pitch Shift | 4-voice overlap with Hann crossfade, 8192-sample circular buffer |
+
+### Signal Flow
+
+Input → Noise Gate → High-Pass → Low-Pass → Bass Shelf → Treble Shelf → Pitch Shift → Gain → Soft Clip → Output
 
 ## Dependencies
 
-- PySide6 - Qt-based GUI framework
-- PyAudio - Audio I/O
-- NumPy - Numerical operations
-- SciPy - Signal processing
+- **PySide6** — Qt GUI framework
+- **PyAudio** — Audio I/O streaming
+- **NumPy** — Numerical operations
+- **SciPy** — Signal processing and filter design
 
 ## License
 
