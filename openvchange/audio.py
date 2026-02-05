@@ -39,6 +39,12 @@ class AudioProcessor(QObject):
         self.bass_freq = 250
         self.treble_freq = 4000
 
+        # Delay (in milliseconds, 0 = no delay)
+        self.delay_ms = 0
+        self.delay_buffer_size = 480000  # ~10s at 48kHz
+        self.delay_buffer = np.zeros(self.delay_buffer_size, dtype=np.float32)
+        self.delay_write_pos = 0
+
         # Pitch shift (in semitones, 0 = no change)
         self.pitch_semitones = 0.0
         self.pitch_window_size = 2048
@@ -130,6 +136,20 @@ class AudioProcessor(QObject):
 
     def set_treble(self, gain_db):
         self.treble_gain = gain_db
+
+    def set_chunk_size(self, size):
+        """Set the audio buffer size (frames per buffer)."""
+        self.chunk_size = size
+
+    def set_pitch_num_voices(self, num):
+        """Set the number of pitch shift voices and reinitialize arrays."""
+        self.pitch_num_voices = num
+        self.pitch_read_pos = [0.0] * self.pitch_num_voices
+        self.pitch_fade_pos = [i / self.pitch_num_voices for i in range(self.pitch_num_voices)]
+
+    def set_delay(self, ms):
+        """Set delay in milliseconds (0 to 10000)."""
+        self.delay_ms = ms
 
     def set_pitch(self, semitones):
         """Set pitch shift in semitones (-12 to +12)."""
@@ -295,6 +315,26 @@ class AudioProcessor(QObject):
         if abs(self.pitch_semitones) >= 0.1:
             data = self.apply_pitch_shift(data)
 
+        # Apply delay
+        if self.delay_ms > 0:
+            delay_samples = int(self.delay_ms * self.sample_rate / 1000)
+            delay_samples = min(delay_samples, self.delay_buffer_size - 1)
+            buf = self.delay_buffer
+            buf_size = self.delay_buffer_size
+            wp = self.delay_write_pos
+            n = len(data)
+
+            # Write current chunk into circular buffer and read delayed samples
+            output = np.empty(n, dtype=np.float32)
+            for i in range(n):
+                buf[wp] = data[i]
+                read_pos = (wp - delay_samples) % buf_size
+                output[i] = buf[read_pos]
+                wp = (wp + 1) % buf_size
+
+            self.delay_write_pos = wp
+            data = output
+
         # Apply gain
         data = data * self.gain
 
@@ -323,6 +363,8 @@ class AudioProcessor(QObject):
         try:
             self.sample_rate = self.find_common_sample_rate()
             self.filter_states = {}
+            self.delay_buffer = np.zeros(self.delay_buffer_size, dtype=np.float32)
+            self.delay_write_pos = 0
             self.pitch_buffer = np.zeros(self.pitch_buffer_size, dtype=np.float32)
             self.pitch_write_pos = self.pitch_buffer_size // 2
             self.pitch_read_pos = [0.0] * self.pitch_num_voices

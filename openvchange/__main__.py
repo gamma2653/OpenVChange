@@ -1,5 +1,6 @@
 """Main entry point for OpenVChange audio routing application."""
 
+import json
 import sys
 
 import pyaudio
@@ -17,6 +18,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QCheckBox,
     QFormLayout,
+    QTabWidget,
+    QSpinBox,
+    QFileDialog,
 )
 
 from openvchange.audio import AudioProcessor
@@ -42,6 +46,14 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
 
+        # Tab widget
+        self.tab_widget = QTabWidget()
+        layout.addWidget(self.tab_widget)
+
+        # ---- Main tab ----
+        main_tab = QWidget()
+        main_layout = QVBoxLayout(main_tab)
+
         # Device selection group
         device_group = QGroupBox("Audio Devices")
         device_layout = QFormLayout()
@@ -55,7 +67,7 @@ class MainWindow(QMainWindow):
         device_layout.addRow("", self.show_all_devices_checkbox)
 
         device_group.setLayout(device_layout)
-        layout.addWidget(device_group)
+        main_layout.addWidget(device_group)
 
         # Filters group
         filters_group = QGroupBox("Filters")
@@ -113,6 +125,19 @@ class MainWindow(QMainWindow):
         pitch_layout.addWidget(self.pitch_label)
         filters_layout.addLayout(pitch_layout)
 
+        # Delay control
+        delay_layout = QHBoxLayout()
+        delay_layout.addWidget(QLabel("Delay:"))
+        self.delay_slider = QSlider(Qt.Horizontal)
+        self.delay_slider.setRange(0, 10000)
+        self.delay_slider.setValue(0)
+        self.delay_slider.valueChanged.connect(self.on_delay_changed)
+        delay_layout.addWidget(self.delay_slider)
+        self.delay_label = QLabel("0 ms")
+        self.delay_label.setMinimumWidth(70)
+        delay_layout.addWidget(self.delay_label)
+        filters_layout.addLayout(delay_layout)
+
         # High-pass filter
         hp_layout = QHBoxLayout()
         self.hp_checkbox = QCheckBox("High-Pass Filter:")
@@ -162,7 +187,7 @@ class MainWindow(QMainWindow):
         filters_layout.addLayout(ng_layout)
 
         filters_group.setLayout(filters_layout)
-        layout.addWidget(filters_group)
+        main_layout.addWidget(filters_group)
 
         # Level meter
         meter_group = QGroupBox("Input Level")
@@ -173,9 +198,42 @@ class MainWindow(QMainWindow):
         self.level_bar.setEnabled(False)
         meter_layout.addWidget(self.level_bar)
         meter_group.setLayout(meter_layout)
-        layout.addWidget(meter_group)
+        main_layout.addWidget(meter_group)
 
-        # Control buttons
+        self.tab_widget.addTab(main_tab, "Main")
+
+        # ---- Advanced Settings tab ----
+        advanced_tab = QWidget()
+        advanced_layout = QVBoxLayout(advanced_tab)
+
+        advanced_group = QGroupBox("Advanced Settings")
+        advanced_form = QFormLayout()
+
+        self.buffer_size_combo = QComboBox()
+        for size in [128, 256, 512, 1024, 2048, 4096]:
+            self.buffer_size_combo.addItem(str(size), size)
+        self.buffer_size_combo.setCurrentIndex(3)  # Default: 1024
+        self.buffer_size_combo.currentIndexChanged.connect(self.on_buffer_size_changed)
+        advanced_form.addRow("Buffer Size:", self.buffer_size_combo)
+
+        self.pitch_voices_spin = QSpinBox()
+        self.pitch_voices_spin.setRange(1, 8)
+        self.pitch_voices_spin.setValue(4)
+        self.pitch_voices_spin.valueChanged.connect(self.on_pitch_voices_changed)
+        advanced_form.addRow("Pitch Voices:", self.pitch_voices_spin)
+
+        advanced_group.setLayout(advanced_form)
+        advanced_layout.addWidget(advanced_group)
+
+        note_label = QLabel("Note: Changes to these settings take effect when the audio stream is next started.")
+        note_label.setWordWrap(True)
+        advanced_layout.addWidget(note_label)
+
+        advanced_layout.addStretch()
+
+        self.tab_widget.addTab(advanced_tab, "Advanced Settings")
+
+        # Control buttons (outside tabs)
         button_layout = QHBoxLayout()
         self.start_button = QPushButton("Start")
         self.start_button.clicked.connect(self.on_start)
@@ -191,6 +249,18 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(self.reset_button)
 
         layout.addLayout(button_layout)
+
+        # Preset buttons
+        preset_layout = QHBoxLayout()
+        self.save_preset_button = QPushButton("Save Preset")
+        self.save_preset_button.clicked.connect(self.on_save_preset)
+        preset_layout.addWidget(self.save_preset_button)
+
+        self.load_preset_button = QPushButton("Load Preset")
+        self.load_preset_button.clicked.connect(self.on_load_preset)
+        preset_layout.addWidget(self.load_preset_button)
+
+        layout.addLayout(preset_layout)
 
         # Status label
         self.status_label = QLabel("Status: Stopped")
@@ -251,6 +321,10 @@ class MainWindow(QMainWindow):
         self.pitch_label.setText(f"{semitones:.1f} st")
         self.audio_processor.set_pitch(semitones)
 
+    def on_delay_changed(self, value):
+        self.delay_label.setText(f"{value} ms")
+        self.audio_processor.set_delay(value)
+
     def on_hp_toggled(self, checked):
         self.hp_slider.setEnabled(checked)
         self.audio_processor.high_pass_enabled = checked
@@ -275,6 +349,16 @@ class MainWindow(QMainWindow):
         self.ng_label.setText(f"{value}%")
         self.audio_processor.set_noise_gate_threshold(value)
 
+    def on_buffer_size_changed(self, index):
+        """Handle buffer size combo box change."""
+        size = self.buffer_size_combo.currentData()
+        if size is not None:
+            self.audio_processor.set_chunk_size(size)
+
+    def on_pitch_voices_changed(self, value):
+        """Handle pitch voices spin box change."""
+        self.audio_processor.set_pitch_num_voices(value)
+
     def on_reset_defaults(self):
         """Reset all filter settings to their default values."""
         # Disable filters first
@@ -287,9 +371,89 @@ class MainWindow(QMainWindow):
         self.bass_slider.setValue(0)
         self.treble_slider.setValue(0)
         self.pitch_slider.setValue(0)
+        self.delay_slider.setValue(0)
         self.hp_slider.setValue(80)
         self.lp_slider.setValue(16000)
         self.ng_slider.setValue(1)
+
+        # Reset advanced settings
+        self.buffer_size_combo.setCurrentIndex(3)  # 1024
+        self.pitch_voices_spin.setValue(4)
+
+    def get_preset(self):
+        """Collect current settings into a dict."""
+        return {
+            "gain": self.gain_slider.value(),
+            "bass": self.bass_slider.value(),
+            "treble": self.treble_slider.value(),
+            "pitch": self.pitch_slider.value(),
+            "delay": self.delay_slider.value(),
+            "high_pass_enabled": self.hp_checkbox.isChecked(),
+            "high_pass_freq": self.hp_slider.value(),
+            "low_pass_enabled": self.lp_checkbox.isChecked(),
+            "low_pass_freq": self.lp_slider.value(),
+            "noise_gate_enabled": self.ng_checkbox.isChecked(),
+            "noise_gate_threshold": self.ng_slider.value(),
+            "buffer_size": self.buffer_size_combo.currentData(),
+            "pitch_voices": self.pitch_voices_spin.value(),
+        }
+
+    def apply_preset(self, preset):
+        """Apply a preset dict to the UI controls."""
+        if "high_pass_enabled" in preset:
+            self.hp_checkbox.setChecked(preset["high_pass_enabled"])
+        if "low_pass_enabled" in preset:
+            self.lp_checkbox.setChecked(preset["low_pass_enabled"])
+        if "noise_gate_enabled" in preset:
+            self.ng_checkbox.setChecked(preset["noise_gate_enabled"])
+
+        if "gain" in preset:
+            self.gain_slider.setValue(preset["gain"])
+        if "bass" in preset:
+            self.bass_slider.setValue(preset["bass"])
+        if "treble" in preset:
+            self.treble_slider.setValue(preset["treble"])
+        if "pitch" in preset:
+            self.pitch_slider.setValue(preset["pitch"])
+        if "delay" in preset:
+            self.delay_slider.setValue(preset["delay"])
+        if "high_pass_freq" in preset:
+            self.hp_slider.setValue(preset["high_pass_freq"])
+        if "low_pass_freq" in preset:
+            self.lp_slider.setValue(preset["low_pass_freq"])
+        if "noise_gate_threshold" in preset:
+            self.ng_slider.setValue(preset["noise_gate_threshold"])
+
+        if "buffer_size" in preset:
+            index = self.buffer_size_combo.findData(preset["buffer_size"])
+            if index >= 0:
+                self.buffer_size_combo.setCurrentIndex(index)
+        if "pitch_voices" in preset:
+            self.pitch_voices_spin.setValue(preset["pitch_voices"])
+
+    def on_save_preset(self):
+        """Save current settings to a JSON file."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Preset", "", "JSON Files (*.json)"
+        )
+        if path:
+            with open(path, "w") as f:
+                json.dump(self.get_preset(), f, indent=2)
+            self.status_label.setText(f"Status: Preset saved")
+
+    def on_load_preset(self):
+        """Load settings from a JSON file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Preset", "", "JSON Files (*.json)"
+        )
+        if path:
+            try:
+                with open(path, "r") as f:
+                    preset = json.load(f)
+                self.apply_preset(preset)
+                self.status_label.setText(f"Status: Preset loaded")
+            except (json.JSONDecodeError, OSError) as e:
+                self.status_label.setText(f"Status: Failed to load preset")
 
     def update_level_meter(self, level):
         """Update the input level meter."""
@@ -313,6 +477,8 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(True)
         self.input_combo.setEnabled(False)
         self.output_combo.setEnabled(False)
+        self.buffer_size_combo.setEnabled(False)
+        self.pitch_voices_spin.setEnabled(False)
         self.status_label.setText("Status: Running")
 
     def on_stop(self):
@@ -323,6 +489,8 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.input_combo.setEnabled(True)
         self.output_combo.setEnabled(True)
+        self.buffer_size_combo.setEnabled(True)
+        self.pitch_voices_spin.setEnabled(True)
         self.status_label.setText("Status: Stopped")
         self.level_bar.setValue(0)
 
