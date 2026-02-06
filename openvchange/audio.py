@@ -25,11 +25,8 @@ class AudioProcessor(QObject):
         self.filter_states = {}
 
         # Filter parameters
-        self.gain = 1.0
         self.low_cut = 80
         self.high_cut = 16000
-        self.noise_gate_threshold = 0.01
-        self.noise_gate_enabled = False
         self.low_pass_enabled = False
         self.high_pass_enabled = False
 
@@ -44,6 +41,34 @@ class AudioProcessor(QObject):
         self.delay_buffer_size = 480000  # ~10s at 48kHz
         self.delay_buffer = np.zeros(self.delay_buffer_size, dtype=np.float32)
         self.delay_write_pos = 0
+
+        # Expander/Gate (replaces simple noise gate)
+        self.expander_enabled = False
+        self.expander_threshold = 0.01  # Linear (0-1)
+        self.expander_ratio = 2.0  # 2:1 = soft, 10:1 = hard gate
+        self.expander_attack_ms = 5.0  # Fast attack
+        self.expander_release_ms = 100.0  # Slow release
+        self.expander_envelope = 1.0  # Current gain envelope
+
+        # Compressor
+        self.compressor_enabled = False
+        self.compressor_threshold_db = -10.0  # dB
+        self.compressor_ratio = 4.0  # 4:1
+        self.compressor_attack_ms = 10.0
+        self.compressor_release_ms = 100.0
+        self.compressor_makeup_db = 0.0
+        self.compressor_envelope_db = -60.0  # Envelope in dB
+
+        # De-esser
+        self.deesser_enabled = False
+        self.deesser_threshold_db = -20.0
+        self.deesser_reduction_db = 6.0
+        self.deesser_envelope = 0.0
+
+        # Parameter smoothing
+        self.gain_target = 1.0
+        self.gain_smoothed = 1.0
+        self.param_smooth_coeff = 0.995  # Per-sample smoothing
 
         # Pitch shift (in semitones, 0 = no change)
         self.pitch_semitones = 0.0
@@ -120,16 +145,13 @@ class AudioProcessor(QObject):
         return 44100
 
     def set_gain(self, gain_db):
-        self.gain = 10 ** (gain_db / 20)
+        self.gain_target = 10 ** (gain_db / 20)
 
     def set_low_cut(self, freq):
         self.low_cut = freq
 
     def set_high_cut(self, freq):
         self.high_cut = freq
-
-    def set_noise_gate_threshold(self, threshold):
-        self.noise_gate_threshold = threshold / 100.0
 
     def set_bass(self, gain_db):
         self.bass_gain = gain_db
@@ -154,6 +176,163 @@ class AudioProcessor(QObject):
     def set_pitch(self, semitones):
         """Set pitch shift in semitones (-12 to +12)."""
         self.pitch_semitones = semitones
+
+    # Expander setters
+    def set_expander_threshold(self, percent):
+        self.expander_threshold = percent / 100.0
+
+    def set_expander_ratio(self, ratio):
+        self.expander_ratio = ratio
+
+    def set_expander_attack(self, ms):
+        self.expander_attack_ms = ms
+
+    def set_expander_release(self, ms):
+        self.expander_release_ms = ms
+
+    # Compressor setters
+    def set_compressor_threshold(self, db):
+        self.compressor_threshold_db = db
+
+    def set_compressor_ratio(self, ratio):
+        self.compressor_ratio = ratio
+
+    def set_compressor_attack(self, ms):
+        self.compressor_attack_ms = ms
+
+    def set_compressor_release(self, ms):
+        self.compressor_release_ms = ms
+
+    def set_compressor_makeup(self, db):
+        self.compressor_makeup_db = db
+
+    # De-esser setters
+    def set_deesser_threshold(self, db):
+        self.deesser_threshold_db = db
+
+    def set_deesser_reduction(self, db):
+        self.deesser_reduction_db = db
+
+    def apply_expander(self, data, rms):
+        """Apply smooth expander/gate with envelope follower."""
+        if not self.expander_enabled:
+            return data
+
+        # Calculate attack/release coefficients
+        attack_coeff = np.exp(-1.0 / (self.expander_attack_ms * self.sample_rate / 1000))
+        release_coeff = np.exp(-1.0 / (self.expander_release_ms * self.sample_rate / 1000))
+
+        threshold = self.expander_threshold
+        ratio = self.expander_ratio
+
+        output = np.empty_like(data)
+        for i in range(len(data)):
+            # Envelope follower - track signal level
+            sample_level = abs(data[i])
+
+            # Determine target gain based on level vs threshold
+            if sample_level > threshold:
+                target_gain = 1.0
+            else:
+                # Below threshold: reduce gain proportionally based on ratio
+                if threshold > 0 and sample_level > 0:
+                    # How many dB below threshold
+                    db_below = 20 * np.log10(threshold / sample_level)
+                    # Expand by ratio (e.g., 2:1 means 1dB below becomes 2dB below)
+                    gain_reduction_db = db_below * (ratio - 1)
+                    target_gain = 10 ** (-gain_reduction_db / 20)
+                else:
+                    target_gain = 0.0
+
+            # Smooth envelope with attack/release
+            if target_gain < self.expander_envelope:
+                # Signal dropping - use attack (fast response)
+                self.expander_envelope = attack_coeff * self.expander_envelope + (1 - attack_coeff) * target_gain
+            else:
+                # Signal rising - use release (slow response)
+                self.expander_envelope = release_coeff * self.expander_envelope + (1 - release_coeff) * target_gain
+
+            output[i] = data[i] * self.expander_envelope
+
+        return output
+
+    def apply_deesser(self, data):
+        """Apply de-esser using bandpass sidechain detection."""
+        if not self.deesser_enabled:
+            return data
+
+        # Create bandpass filter for sibilance detection (5-8 kHz)
+        nyquist = self.sample_rate / 2
+        low_freq = min(5000 / nyquist, 0.99)
+        high_freq = min(8000 / nyquist, 0.99)
+
+        if low_freq >= high_freq:
+            return data
+
+        b, a = signal.butter(2, [low_freq, high_freq], btype='band')  # type: ignore[attr-defined]
+        sidechain = self.apply_filter_with_state(b, a, data.copy(), "deesser_sidechain")
+
+        # Fast envelope follower for sidechain
+        attack_coeff = np.exp(-1.0 / (1.0 * self.sample_rate / 1000))  # 1ms attack
+        release_coeff = np.exp(-1.0 / (50.0 * self.sample_rate / 1000))  # 50ms release
+
+        threshold_linear = 10 ** (self.deesser_threshold_db / 20)
+        reduction_linear = 10 ** (-self.deesser_reduction_db / 20)
+
+        output = np.empty_like(data)
+        for i in range(len(data)):
+            # Track sidechain envelope
+            sc_level = abs(sidechain[i])
+            if sc_level > self.deesser_envelope:
+                self.deesser_envelope = attack_coeff * self.deesser_envelope + (1 - attack_coeff) * sc_level
+            else:
+                self.deesser_envelope = release_coeff * self.deesser_envelope + (1 - release_coeff) * sc_level
+
+            # Apply gain reduction when sidechain exceeds threshold
+            if self.deesser_envelope > threshold_linear:
+                output[i] = data[i] * reduction_linear
+            else:
+                output[i] = data[i]
+
+        return output
+
+    def apply_compressor(self, data):
+        """Apply dynamic range compression with attack/release."""
+        if not self.compressor_enabled:
+            return data
+
+        # Calculate attack/release coefficients
+        attack_coeff = np.exp(-1.0 / (self.compressor_attack_ms * self.sample_rate / 1000))
+        release_coeff = np.exp(-1.0 / (self.compressor_release_ms * self.sample_rate / 1000))
+
+        threshold_db = self.compressor_threshold_db
+        ratio = self.compressor_ratio
+        makeup_linear = 10 ** (self.compressor_makeup_db / 20)
+
+        output = np.empty_like(data)
+        for i in range(len(data)):
+            # Convert to dB (with floor to avoid log(0))
+            sample_abs = max(abs(data[i]), 1e-10)
+            sample_db = 20 * np.log10(sample_abs)
+
+            # Envelope follower in dB domain
+            if sample_db > self.compressor_envelope_db:
+                self.compressor_envelope_db = attack_coeff * self.compressor_envelope_db + (1 - attack_coeff) * sample_db
+            else:
+                self.compressor_envelope_db = release_coeff * self.compressor_envelope_db + (1 - release_coeff) * sample_db
+
+            # Calculate gain reduction
+            if self.compressor_envelope_db > threshold_db:
+                overshoot_db = self.compressor_envelope_db - threshold_db
+                gain_reduction_db = overshoot_db * (1 - 1 / ratio)
+            else:
+                gain_reduction_db = 0.0
+
+            # Apply gain reduction and makeup
+            gain_linear = 10 ** (-gain_reduction_db / 20) * makeup_linear
+            output[i] = data[i] * gain_linear
+
+        return output
 
     def apply_pitch_shift(self, data):
         """Apply pitch shift using multi-pointer delay line with crossfade.
@@ -272,10 +451,8 @@ class AudioProcessor(QObject):
         rms = np.sqrt(np.mean(data**2))
         self.level_changed.emit(rms)
 
-        # Noise gate
-        if self.noise_gate_enabled:
-            if rms < self.noise_gate_threshold:
-                data = data * 0.0
+        # Expander/Gate (smooth envelope-based)
+        data = self.apply_expander(data, rms)
 
         # High-pass filter (remove low frequencies)
         if self.high_pass_enabled and self.low_cut > 20:
@@ -311,6 +488,12 @@ class AudioProcessor(QObject):
         elif "treble" in self.filter_states:
             del self.filter_states["treble"]
 
+        # De-esser (before compressor)
+        data = self.apply_deesser(data)
+
+        # Compressor
+        data = self.apply_compressor(data)
+
         # Apply pitch shift
         if abs(self.pitch_semitones) >= 0.1:
             data = self.apply_pitch_shift(data)
@@ -335,11 +518,16 @@ class AudioProcessor(QObject):
             self.delay_write_pos = wp
             data = output
 
-        # Apply gain
-        data = data * self.gain
+        # Apply gain (with per-sample smoothing to prevent clicks)
+        smooth_coeff = self.param_smooth_coeff
+        output = np.empty_like(data)
+        for i in range(len(data)):
+            self.gain_smoothed += (self.gain_target - self.gain_smoothed) * (1 - smooth_coeff)
+            output[i] = data[i] * self.gain_smoothed
+        data = output
 
-        # Clip to prevent distortion
-        data = np.clip(data, -1.0, 1.0)
+        # Soft clipping using tanh for smoother limiting
+        data = np.tanh(data)
 
         # Convert back to int16
         return (data * 32767).astype(np.int16).tobytes()
@@ -369,6 +557,12 @@ class AudioProcessor(QObject):
             self.pitch_write_pos = self.pitch_buffer_size // 2
             self.pitch_read_pos = [0.0] * self.pitch_num_voices
             self.pitch_fade_pos = [i / self.pitch_num_voices for i in range(self.pitch_num_voices)]
+
+            # Reset dynamics processor states
+            self.expander_envelope = 1.0
+            self.compressor_envelope_db = -60.0
+            self.deesser_envelope = 0.0
+            self.gain_smoothed = self.gain_target
 
             # Use full-duplex stream for synchronized I/O
             self.stream = self.pa.open(

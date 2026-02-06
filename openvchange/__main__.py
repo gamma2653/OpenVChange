@@ -32,7 +32,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OpenVChange - Virtual Audio Router")
-        self.setMinimumSize(500, 520)
+        self.setMinimumSize(500, 580)
 
         self.audio_processor = AudioProcessor()
         self.audio_processor.level_changed.connect(self.update_level_meter)
@@ -170,22 +170,6 @@ class MainWindow(QMainWindow):
         lp_layout.addWidget(self.lp_label)
         filters_layout.addLayout(lp_layout)
 
-        # Noise gate
-        ng_layout = QHBoxLayout()
-        self.ng_checkbox = QCheckBox("Noise Gate:")
-        self.ng_checkbox.toggled.connect(self.on_ng_toggled)
-        ng_layout.addWidget(self.ng_checkbox)
-        self.ng_slider = QSlider(Qt.Horizontal)
-        self.ng_slider.setRange(0, 20)
-        self.ng_slider.setValue(1)
-        self.ng_slider.setEnabled(False)
-        self.ng_slider.valueChanged.connect(self.on_ng_changed)
-        ng_layout.addWidget(self.ng_slider)
-        self.ng_label = QLabel("1%")
-        self.ng_label.setMinimumWidth(60)
-        ng_layout.addWidget(self.ng_label)
-        filters_layout.addLayout(ng_layout)
-
         filters_group.setLayout(filters_layout)
         main_layout.addWidget(filters_group)
 
@@ -201,6 +185,167 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(meter_group)
 
         self.tab_widget.addTab(main_tab, "Main")
+
+        # ---- Dynamics tab ----
+        dynamics_tab = QWidget()
+        dynamics_layout = QVBoxLayout(dynamics_tab)
+
+        # Expander/Gate group
+        expander_group = QGroupBox("Expander/Gate")
+        expander_form = QFormLayout()
+
+        self.expander_checkbox = QCheckBox("Enable")
+        self.expander_checkbox.toggled.connect(self.on_expander_toggled)
+        expander_form.addRow("", self.expander_checkbox)
+
+        self.expander_threshold_slider = QSlider(Qt.Horizontal)
+        self.expander_threshold_slider.setRange(0, 20)
+        self.expander_threshold_slider.setValue(1)
+        self.expander_threshold_slider.setEnabled(False)
+        self.expander_threshold_slider.valueChanged.connect(self.on_expander_threshold_changed)
+        self.expander_threshold_label = QLabel("1%")
+        threshold_layout = QHBoxLayout()
+        threshold_layout.addWidget(self.expander_threshold_slider)
+        threshold_layout.addWidget(self.expander_threshold_label)
+        expander_form.addRow("Threshold:", threshold_layout)
+
+        self.expander_ratio_slider = QSlider(Qt.Horizontal)
+        self.expander_ratio_slider.setRange(15, 100)  # 1.5:1 to 10:1 (x10)
+        self.expander_ratio_slider.setValue(20)
+        self.expander_ratio_slider.setEnabled(False)
+        self.expander_ratio_slider.valueChanged.connect(self.on_expander_ratio_changed)
+        self.expander_ratio_label = QLabel("2.0:1")
+        ratio_layout = QHBoxLayout()
+        ratio_layout.addWidget(self.expander_ratio_slider)
+        ratio_layout.addWidget(self.expander_ratio_label)
+        expander_form.addRow("Ratio:", ratio_layout)
+
+        self.expander_attack_slider = QSlider(Qt.Horizontal)
+        self.expander_attack_slider.setRange(1, 50)
+        self.expander_attack_slider.setValue(5)
+        self.expander_attack_slider.setEnabled(False)
+        self.expander_attack_slider.valueChanged.connect(self.on_expander_attack_changed)
+        self.expander_attack_label = QLabel("5 ms")
+        attack_layout = QHBoxLayout()
+        attack_layout.addWidget(self.expander_attack_slider)
+        attack_layout.addWidget(self.expander_attack_label)
+        expander_form.addRow("Attack:", attack_layout)
+
+        self.expander_release_slider = QSlider(Qt.Horizontal)
+        self.expander_release_slider.setRange(20, 500)
+        self.expander_release_slider.setValue(100)
+        self.expander_release_slider.setEnabled(False)
+        self.expander_release_slider.valueChanged.connect(self.on_expander_release_changed)
+        self.expander_release_label = QLabel("100 ms")
+        release_layout = QHBoxLayout()
+        release_layout.addWidget(self.expander_release_slider)
+        release_layout.addWidget(self.expander_release_label)
+        expander_form.addRow("Release:", release_layout)
+
+        expander_group.setLayout(expander_form)
+        dynamics_layout.addWidget(expander_group)
+
+        # Compressor group
+        compressor_group = QGroupBox("Compressor")
+        compressor_form = QFormLayout()
+
+        self.compressor_checkbox = QCheckBox("Enable")
+        self.compressor_checkbox.toggled.connect(self.on_compressor_toggled)
+        compressor_form.addRow("", self.compressor_checkbox)
+
+        self.compressor_threshold_slider = QSlider(Qt.Horizontal)
+        self.compressor_threshold_slider.setRange(-40, 0)
+        self.compressor_threshold_slider.setValue(-10)
+        self.compressor_threshold_slider.setEnabled(False)
+        self.compressor_threshold_slider.valueChanged.connect(self.on_compressor_threshold_changed)
+        self.compressor_threshold_label = QLabel("-10 dB")
+        comp_thresh_layout = QHBoxLayout()
+        comp_thresh_layout.addWidget(self.compressor_threshold_slider)
+        comp_thresh_layout.addWidget(self.compressor_threshold_label)
+        compressor_form.addRow("Threshold:", comp_thresh_layout)
+
+        self.compressor_ratio_slider = QSlider(Qt.Horizontal)
+        self.compressor_ratio_slider.setRange(10, 200)  # 1:1 to 20:1 (x10)
+        self.compressor_ratio_slider.setValue(40)
+        self.compressor_ratio_slider.setEnabled(False)
+        self.compressor_ratio_slider.valueChanged.connect(self.on_compressor_ratio_changed)
+        self.compressor_ratio_label = QLabel("4.0:1")
+        comp_ratio_layout = QHBoxLayout()
+        comp_ratio_layout.addWidget(self.compressor_ratio_slider)
+        comp_ratio_layout.addWidget(self.compressor_ratio_label)
+        compressor_form.addRow("Ratio:", comp_ratio_layout)
+
+        self.compressor_attack_slider = QSlider(Qt.Horizontal)
+        self.compressor_attack_slider.setRange(1, 100)
+        self.compressor_attack_slider.setValue(10)
+        self.compressor_attack_slider.setEnabled(False)
+        self.compressor_attack_slider.valueChanged.connect(self.on_compressor_attack_changed)
+        self.compressor_attack_label = QLabel("10 ms")
+        comp_attack_layout = QHBoxLayout()
+        comp_attack_layout.addWidget(self.compressor_attack_slider)
+        comp_attack_layout.addWidget(self.compressor_attack_label)
+        compressor_form.addRow("Attack:", comp_attack_layout)
+
+        self.compressor_release_slider = QSlider(Qt.Horizontal)
+        self.compressor_release_slider.setRange(10, 1000)
+        self.compressor_release_slider.setValue(100)
+        self.compressor_release_slider.setEnabled(False)
+        self.compressor_release_slider.valueChanged.connect(self.on_compressor_release_changed)
+        self.compressor_release_label = QLabel("100 ms")
+        comp_release_layout = QHBoxLayout()
+        comp_release_layout.addWidget(self.compressor_release_slider)
+        comp_release_layout.addWidget(self.compressor_release_label)
+        compressor_form.addRow("Release:", comp_release_layout)
+
+        self.compressor_makeup_slider = QSlider(Qt.Horizontal)
+        self.compressor_makeup_slider.setRange(0, 24)
+        self.compressor_makeup_slider.setValue(0)
+        self.compressor_makeup_slider.setEnabled(False)
+        self.compressor_makeup_slider.valueChanged.connect(self.on_compressor_makeup_changed)
+        self.compressor_makeup_label = QLabel("0 dB")
+        comp_makeup_layout = QHBoxLayout()
+        comp_makeup_layout.addWidget(self.compressor_makeup_slider)
+        comp_makeup_layout.addWidget(self.compressor_makeup_label)
+        compressor_form.addRow("Makeup:", comp_makeup_layout)
+
+        compressor_group.setLayout(compressor_form)
+        dynamics_layout.addWidget(compressor_group)
+
+        # De-esser group
+        deesser_group = QGroupBox("De-esser")
+        deesser_form = QFormLayout()
+
+        self.deesser_checkbox = QCheckBox("Enable")
+        self.deesser_checkbox.toggled.connect(self.on_deesser_toggled)
+        deesser_form.addRow("", self.deesser_checkbox)
+
+        self.deesser_threshold_slider = QSlider(Qt.Horizontal)
+        self.deesser_threshold_slider.setRange(-40, 0)
+        self.deesser_threshold_slider.setValue(-20)
+        self.deesser_threshold_slider.setEnabled(False)
+        self.deesser_threshold_slider.valueChanged.connect(self.on_deesser_threshold_changed)
+        self.deesser_threshold_label = QLabel("-20 dB")
+        deesser_thresh_layout = QHBoxLayout()
+        deesser_thresh_layout.addWidget(self.deesser_threshold_slider)
+        deesser_thresh_layout.addWidget(self.deesser_threshold_label)
+        deesser_form.addRow("Threshold:", deesser_thresh_layout)
+
+        self.deesser_reduction_slider = QSlider(Qt.Horizontal)
+        self.deesser_reduction_slider.setRange(0, 12)
+        self.deesser_reduction_slider.setValue(6)
+        self.deesser_reduction_slider.setEnabled(False)
+        self.deesser_reduction_slider.valueChanged.connect(self.on_deesser_reduction_changed)
+        self.deesser_reduction_label = QLabel("6 dB")
+        deesser_red_layout = QHBoxLayout()
+        deesser_red_layout.addWidget(self.deesser_reduction_slider)
+        deesser_red_layout.addWidget(self.deesser_reduction_label)
+        deesser_form.addRow("Reduction:", deesser_red_layout)
+
+        deesser_group.setLayout(deesser_form)
+        dynamics_layout.addWidget(deesser_group)
+
+        dynamics_layout.addStretch()
+        self.tab_widget.addTab(dynamics_tab, "Dynamics")
 
         # ---- Advanced Settings tab ----
         advanced_tab = QWidget()
@@ -341,13 +486,71 @@ class MainWindow(QMainWindow):
         self.lp_label.setText(f"{value} Hz")
         self.audio_processor.set_high_cut(value)
 
-    def on_ng_toggled(self, checked):
-        self.ng_slider.setEnabled(checked)
-        self.audio_processor.noise_gate_enabled = checked
+    def on_expander_toggled(self, checked):
+        self.expander_threshold_slider.setEnabled(checked)
+        self.expander_ratio_slider.setEnabled(checked)
+        self.expander_attack_slider.setEnabled(checked)
+        self.expander_release_slider.setEnabled(checked)
+        self.audio_processor.expander_enabled = checked
 
-    def on_ng_changed(self, value):
-        self.ng_label.setText(f"{value}%")
-        self.audio_processor.set_noise_gate_threshold(value)
+    def on_expander_threshold_changed(self, value):
+        self.expander_threshold_label.setText(f"{value}%")
+        self.audio_processor.set_expander_threshold(value)
+
+    def on_expander_ratio_changed(self, value):
+        ratio = value / 10.0
+        self.expander_ratio_label.setText(f"{ratio:.1f}:1")
+        self.audio_processor.set_expander_ratio(ratio)
+
+    def on_expander_attack_changed(self, value):
+        self.expander_attack_label.setText(f"{value} ms")
+        self.audio_processor.set_expander_attack(value)
+
+    def on_expander_release_changed(self, value):
+        self.expander_release_label.setText(f"{value} ms")
+        self.audio_processor.set_expander_release(value)
+
+    def on_compressor_toggled(self, checked):
+        self.compressor_threshold_slider.setEnabled(checked)
+        self.compressor_ratio_slider.setEnabled(checked)
+        self.compressor_attack_slider.setEnabled(checked)
+        self.compressor_release_slider.setEnabled(checked)
+        self.compressor_makeup_slider.setEnabled(checked)
+        self.audio_processor.compressor_enabled = checked
+
+    def on_compressor_threshold_changed(self, value):
+        self.compressor_threshold_label.setText(f"{value} dB")
+        self.audio_processor.set_compressor_threshold(value)
+
+    def on_compressor_ratio_changed(self, value):
+        ratio = value / 10.0
+        self.compressor_ratio_label.setText(f"{ratio:.1f}:1")
+        self.audio_processor.set_compressor_ratio(ratio)
+
+    def on_compressor_attack_changed(self, value):
+        self.compressor_attack_label.setText(f"{value} ms")
+        self.audio_processor.set_compressor_attack(value)
+
+    def on_compressor_release_changed(self, value):
+        self.compressor_release_label.setText(f"{value} ms")
+        self.audio_processor.set_compressor_release(value)
+
+    def on_compressor_makeup_changed(self, value):
+        self.compressor_makeup_label.setText(f"{value} dB")
+        self.audio_processor.set_compressor_makeup(value)
+
+    def on_deesser_toggled(self, checked):
+        self.deesser_threshold_slider.setEnabled(checked)
+        self.deesser_reduction_slider.setEnabled(checked)
+        self.audio_processor.deesser_enabled = checked
+
+    def on_deesser_threshold_changed(self, value):
+        self.deesser_threshold_label.setText(f"{value} dB")
+        self.audio_processor.set_deesser_threshold(value)
+
+    def on_deesser_reduction_changed(self, value):
+        self.deesser_reduction_label.setText(f"{value} dB")
+        self.audio_processor.set_deesser_reduction(value)
 
     def on_buffer_size_changed(self, index):
         """Handle buffer size combo box change."""
@@ -364,7 +567,9 @@ class MainWindow(QMainWindow):
         # Disable filters first
         self.hp_checkbox.setChecked(False)
         self.lp_checkbox.setChecked(False)
-        self.ng_checkbox.setChecked(False)
+        self.expander_checkbox.setChecked(False)
+        self.compressor_checkbox.setChecked(False)
+        self.deesser_checkbox.setChecked(False)
 
         # Reset slider values
         self.gain_slider.setValue(0)
@@ -374,7 +579,23 @@ class MainWindow(QMainWindow):
         self.delay_slider.setValue(0)
         self.hp_slider.setValue(80)
         self.lp_slider.setValue(16000)
-        self.ng_slider.setValue(1)
+
+        # Reset expander
+        self.expander_threshold_slider.setValue(1)
+        self.expander_ratio_slider.setValue(20)
+        self.expander_attack_slider.setValue(5)
+        self.expander_release_slider.setValue(100)
+
+        # Reset compressor
+        self.compressor_threshold_slider.setValue(-10)
+        self.compressor_ratio_slider.setValue(40)
+        self.compressor_attack_slider.setValue(10)
+        self.compressor_release_slider.setValue(100)
+        self.compressor_makeup_slider.setValue(0)
+
+        # Reset de-esser
+        self.deesser_threshold_slider.setValue(-20)
+        self.deesser_reduction_slider.setValue(6)
 
         # Reset advanced settings
         self.buffer_size_combo.setCurrentIndex(3)  # 1024
@@ -392,21 +613,43 @@ class MainWindow(QMainWindow):
             "high_pass_freq": self.hp_slider.value(),
             "low_pass_enabled": self.lp_checkbox.isChecked(),
             "low_pass_freq": self.lp_slider.value(),
-            "noise_gate_enabled": self.ng_checkbox.isChecked(),
-            "noise_gate_threshold": self.ng_slider.value(),
+            # Expander
+            "expander_enabled": self.expander_checkbox.isChecked(),
+            "expander_threshold": self.expander_threshold_slider.value(),
+            "expander_ratio": self.expander_ratio_slider.value(),
+            "expander_attack": self.expander_attack_slider.value(),
+            "expander_release": self.expander_release_slider.value(),
+            # Compressor
+            "compressor_enabled": self.compressor_checkbox.isChecked(),
+            "compressor_threshold": self.compressor_threshold_slider.value(),
+            "compressor_ratio": self.compressor_ratio_slider.value(),
+            "compressor_attack": self.compressor_attack_slider.value(),
+            "compressor_release": self.compressor_release_slider.value(),
+            "compressor_makeup": self.compressor_makeup_slider.value(),
+            # De-esser
+            "deesser_enabled": self.deesser_checkbox.isChecked(),
+            "deesser_threshold": self.deesser_threshold_slider.value(),
+            "deesser_reduction": self.deesser_reduction_slider.value(),
+            # Advanced
             "buffer_size": self.buffer_size_combo.currentData(),
             "pitch_voices": self.pitch_voices_spin.value(),
         }
 
     def apply_preset(self, preset):
         """Apply a preset dict to the UI controls."""
+        # Checkboxes first
         if "high_pass_enabled" in preset:
             self.hp_checkbox.setChecked(preset["high_pass_enabled"])
         if "low_pass_enabled" in preset:
             self.lp_checkbox.setChecked(preset["low_pass_enabled"])
-        if "noise_gate_enabled" in preset:
-            self.ng_checkbox.setChecked(preset["noise_gate_enabled"])
+        if "expander_enabled" in preset:
+            self.expander_checkbox.setChecked(preset["expander_enabled"])
+        if "compressor_enabled" in preset:
+            self.compressor_checkbox.setChecked(preset["compressor_enabled"])
+        if "deesser_enabled" in preset:
+            self.deesser_checkbox.setChecked(preset["deesser_enabled"])
 
+        # Main sliders
         if "gain" in preset:
             self.gain_slider.setValue(preset["gain"])
         if "bass" in preset:
@@ -421,9 +664,36 @@ class MainWindow(QMainWindow):
             self.hp_slider.setValue(preset["high_pass_freq"])
         if "low_pass_freq" in preset:
             self.lp_slider.setValue(preset["low_pass_freq"])
-        if "noise_gate_threshold" in preset:
-            self.ng_slider.setValue(preset["noise_gate_threshold"])
 
+        # Expander
+        if "expander_threshold" in preset:
+            self.expander_threshold_slider.setValue(preset["expander_threshold"])
+        if "expander_ratio" in preset:
+            self.expander_ratio_slider.setValue(preset["expander_ratio"])
+        if "expander_attack" in preset:
+            self.expander_attack_slider.setValue(preset["expander_attack"])
+        if "expander_release" in preset:
+            self.expander_release_slider.setValue(preset["expander_release"])
+
+        # Compressor
+        if "compressor_threshold" in preset:
+            self.compressor_threshold_slider.setValue(preset["compressor_threshold"])
+        if "compressor_ratio" in preset:
+            self.compressor_ratio_slider.setValue(preset["compressor_ratio"])
+        if "compressor_attack" in preset:
+            self.compressor_attack_slider.setValue(preset["compressor_attack"])
+        if "compressor_release" in preset:
+            self.compressor_release_slider.setValue(preset["compressor_release"])
+        if "compressor_makeup" in preset:
+            self.compressor_makeup_slider.setValue(preset["compressor_makeup"])
+
+        # De-esser
+        if "deesser_threshold" in preset:
+            self.deesser_threshold_slider.setValue(preset["deesser_threshold"])
+        if "deesser_reduction" in preset:
+            self.deesser_reduction_slider.setValue(preset["deesser_reduction"])
+
+        # Advanced
         if "buffer_size" in preset:
             index = self.buffer_size_combo.findData(preset["buffer_size"])
             if index >= 0:
