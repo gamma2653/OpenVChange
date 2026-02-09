@@ -1,6 +1,9 @@
 """Audio processing module for OpenVChange."""
 
+from typing import Optional
+
 import numpy as np
+import numpy.typing as npt
 import pyaudio
 from scipy import signal
 from PySide6.QtCore import QObject, Signal
@@ -11,7 +14,7 @@ class AudioProcessor(QObject):
 
     level_changed = Signal(float)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self.running = False
         self.input_device = None
@@ -83,13 +86,13 @@ class AudioProcessor(QObject):
 
         self.pa = pyaudio.PyAudio()
 
-    def set_input_device(self, device_index):
+    def set_input_device(self, device_index: int) -> None:
         self.input_device = device_index
 
-    def set_output_device(self, device_index):
+    def set_output_device(self, device_index: int) -> None:
         self.output_device = device_index
 
-    def get_supported_sample_rate(self, device_index, is_input):
+    def get_supported_sample_rate(self, device_index: int, is_input: bool) -> int:
         """Find a supported sample rate for the device."""
         common_rates = [48000, 44100, 96000, 32000, 22050, 16000]
         device_info = self.pa.get_device_info_by_index(device_index)
@@ -118,7 +121,7 @@ class AudioProcessor(QObject):
         # Fallback to device default
         return int(device_info.get("defaultSampleRate", 44100))
 
-    def find_common_sample_rate(self):
+    def find_common_sample_rate(self) -> int:
         """Find a sample rate supported by both input and output devices."""
         common_rates = [48000, 44100, 96000, 32000, 22050, 16000]
 
@@ -144,76 +147,76 @@ class AudioProcessor(QObject):
         # Fallback
         return 44100
 
-    def set_gain(self, gain_db):
+    def set_gain(self, gain_db: float) -> None:
         self.gain_target = 10 ** (gain_db / 20)
 
-    def set_low_cut(self, freq):
+    def set_low_cut(self, freq: float) -> None:
         self.low_cut = freq
 
-    def set_high_cut(self, freq):
+    def set_high_cut(self, freq: float) -> None:
         self.high_cut = freq
 
-    def set_bass(self, gain_db):
+    def set_bass(self, gain_db: float) -> None:
         self.bass_gain = gain_db
 
-    def set_treble(self, gain_db):
+    def set_treble(self, gain_db: float) -> None:
         self.treble_gain = gain_db
 
-    def set_chunk_size(self, size):
+    def set_chunk_size(self, size: int) -> None:
         """Set the audio buffer size (frames per buffer)."""
         self.chunk_size = size
 
-    def set_pitch_num_voices(self, num):
+    def set_pitch_num_voices(self, num: int) -> None:
         """Set the number of pitch shift voices and reinitialize arrays."""
         self.pitch_num_voices = num
         self.pitch_read_pos = [0.0] * self.pitch_num_voices
         self.pitch_fade_pos = [i / self.pitch_num_voices for i in range(self.pitch_num_voices)]
 
-    def set_delay(self, ms):
+    def set_delay(self, ms: float) -> None:
         """Set delay in milliseconds (0 to 10000)."""
         self.delay_ms = ms
 
-    def set_pitch(self, semitones):
+    def set_pitch(self, semitones: float) -> None:
         """Set pitch shift in semitones (-12 to +12)."""
         self.pitch_semitones = semitones
 
     # Expander setters
-    def set_expander_threshold(self, percent):
+    def set_expander_threshold(self, percent: float) -> None:
         self.expander_threshold = percent / 100.0
 
-    def set_expander_ratio(self, ratio):
+    def set_expander_ratio(self, ratio: float) -> None:
         self.expander_ratio = ratio
 
-    def set_expander_attack(self, ms):
+    def set_expander_attack(self, ms: float) -> None:
         self.expander_attack_ms = ms
 
-    def set_expander_release(self, ms):
+    def set_expander_release(self, ms: float) -> None:
         self.expander_release_ms = ms
 
     # Compressor setters
-    def set_compressor_threshold(self, db):
+    def set_compressor_threshold(self, db: float) -> None:
         self.compressor_threshold_db = db
 
-    def set_compressor_ratio(self, ratio):
+    def set_compressor_ratio(self, ratio: float) -> None:
         self.compressor_ratio = ratio
 
-    def set_compressor_attack(self, ms):
+    def set_compressor_attack(self, ms: float) -> None:
         self.compressor_attack_ms = ms
 
-    def set_compressor_release(self, ms):
+    def set_compressor_release(self, ms: float) -> None:
         self.compressor_release_ms = ms
 
-    def set_compressor_makeup(self, db):
+    def set_compressor_makeup(self, db: float) -> None:
         self.compressor_makeup_db = db
 
     # De-esser setters
-    def set_deesser_threshold(self, db):
+    def set_deesser_threshold(self, db: float) -> None:
         self.deesser_threshold_db = db
 
-    def set_deesser_reduction(self, db):
+    def set_deesser_reduction(self, db: float) -> None:
         self.deesser_reduction_db = db
 
-    def apply_expander(self, data, rms):
+    def apply_expander(self, data: npt.NDArray[np.float32], rms: float) -> npt.NDArray[np.float32]:
         """Apply smooth expander/gate with envelope follower."""
         if not self.expander_enabled:
             return data
@@ -256,7 +259,7 @@ class AudioProcessor(QObject):
 
         return output
 
-    def apply_deesser(self, data):
+    def apply_deesser(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         """Apply de-esser using bandpass sidechain detection."""
         if not self.deesser_enabled:
             return data
@@ -296,7 +299,7 @@ class AudioProcessor(QObject):
 
         return output
 
-    def apply_compressor(self, data):
+    def apply_compressor(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         """Apply dynamic range compression with attack/release."""
         if not self.compressor_enabled:
             return data
@@ -334,7 +337,7 @@ class AudioProcessor(QObject):
 
         return output
 
-    def apply_pitch_shift(self, data):
+    def apply_pitch_shift(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         """Apply pitch shift using multi-pointer delay line with crossfade.
 
         Multiple read pointers traverse a circular buffer at the shifted rate.
@@ -404,7 +407,7 @@ class AudioProcessor(QObject):
 
         return output
 
-    def make_shelf_filter(self, freq, gain_db, filter_type="low"):
+    def make_shelf_filter(self, freq: float, gain_db: float, filter_type: str = "low") -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
         """Create a shelf filter using biquad coefficients.
 
         Based on Robert Bristow-Johnson's Audio EQ Cookbook.
@@ -435,14 +438,14 @@ class AudioProcessor(QObject):
         a = np.array([1, a1/a0, a2/a0])
         return b, a
 
-    def apply_filter_with_state(self, b, a, data, filter_key):
+    def apply_filter_with_state(self, b: npt.NDArray[np.floating], a: npt.NDArray[np.floating], data: npt.NDArray[np.float32], filter_key: str) -> npt.NDArray[np.float32]:
         """Apply filter while preserving state between chunks."""
         if filter_key not in self.filter_states:
             self.filter_states[filter_key] = signal.lfilter_zi(b, a) * data[0]
         data, self.filter_states[filter_key] = signal.lfilter(b, a, data, zi=self.filter_states[filter_key])
         return data
 
-    def apply_filters(self, audio_data):
+    def apply_filters(self, audio_data: bytes) -> bytes:
         """Apply enabled filters to audio data."""
         data = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
         data = data / 32768.0  # Normalize to -1.0 to 1.0
@@ -532,7 +535,7 @@ class AudioProcessor(QObject):
         # Convert back to int16
         return (data * 32767).astype(np.int16).tobytes()
 
-    def audio_callback(self, in_data, frame_count, time_info, status):
+    def audio_callback(self, in_data: Optional[bytes], frame_count: int, time_info: dict, status: int) -> tuple[bytes, int]:
         """Combined callback for full-duplex audio processing."""
         if not self.running or in_data is None:
             return (b'\x00' * (frame_count * self.channels * 2), pyaudio.paContinue)
@@ -543,7 +546,7 @@ class AudioProcessor(QObject):
         except Exception:
             return (in_data, pyaudio.paContinue)
 
-    def start(self):
+    def start(self) -> None:
         """Start audio processing."""
         if self.input_device is None or self.output_device is None:
             return
@@ -584,7 +587,7 @@ class AudioProcessor(QObject):
             print(f"Audio error: {e}")
             self.running = False
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop audio processing."""
         self.running = False
 
