@@ -1,6 +1,6 @@
 """Audio processing module for OpenVChange."""
 
-from typing import Optional
+from typing import Optional, Mapping
 
 import numpy as np
 import numpy.typing as npt
@@ -535,7 +535,7 @@ class AudioProcessor(QObject):
         # Convert back to int16
         return (data * 32767).astype(np.int16).tobytes()
 
-    def audio_callback(self, in_data: Optional[bytes], frame_count: int, time_info: dict, status: int) -> tuple[bytes, int]:
+    def audio_callback(self, in_data: Optional[bytes], frame_count: int, time_info: Mapping[str, float], status: int) -> tuple[bytes, int]:
         """Combined callback for full-duplex audio processing."""
         if not self.running or in_data is None:
             return (b'\x00' * (frame_count * self.channels * 2), pyaudio.paContinue)

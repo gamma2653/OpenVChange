@@ -76,7 +76,7 @@ class MainWindow(QMainWindow):
         # Gain control
         gain_layout = QHBoxLayout()
         gain_layout.addWidget(QLabel("Gain:"))
-        self.gain_slider = QSlider(Qt.Horizontal)
+        self.gain_slider = QSlider(Qt.Orientation.Horizontal)
         self.gain_slider.setRange(-20, 20)
         self.gain_slider.setValue(0)
         self.gain_slider.valueChanged.connect(self.on_gain_changed)
@@ -89,7 +89,7 @@ class MainWindow(QMainWindow):
         # Bass control
         bass_layout = QHBoxLayout()
         bass_layout.addWidget(QLabel("Bass:"))
-        self.bass_slider = QSlider(Qt.Horizontal)
+        self.bass_slider = QSlider(Qt.Orientation.Horizontal)
         self.bass_slider.setRange(-128, 128)
         self.bass_slider.setValue(0)
         self.bass_slider.valueChanged.connect(self.on_bass_changed)
@@ -102,7 +102,7 @@ class MainWindow(QMainWindow):
         # Treble control
         treble_layout = QHBoxLayout()
         treble_layout.addWidget(QLabel("Treble:"))
-        self.treble_slider = QSlider(Qt.Horizontal)
+        self.treble_slider = QSlider(Qt.Orientation.Horizontal)
         self.treble_slider.setRange(-128, 128)
         self.treble_slider.setValue(0)
         self.treble_slider.valueChanged.connect(self.on_treble_changed)
@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
         # Pitch control
         pitch_layout = QHBoxLayout()
         pitch_layout.addWidget(QLabel("Pitch:"))
-        self.pitch_slider = QSlider(Qt.Horizontal)
+        self.pitch_slider = QSlider(Qt.Orientation.Horizontal)
         self.pitch_slider.setRange(-120, 120)  # -12 to +12 semitones (x10 for precision)
         self.pitch_slider.setValue(0)
         self.pitch_slider.valueChanged.connect(self.on_pitch_changed)
@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
         # Delay control
         delay_layout = QHBoxLayout()
         delay_layout.addWidget(QLabel("Delay:"))
-        self.delay_slider = QSlider(Qt.Horizontal)
+        self.delay_slider = QSlider(Qt.Orientation.Horizontal)
         self.delay_slider.setRange(0, 10000)
         self.delay_slider.setValue(0)
         self.delay_slider.valueChanged.connect(self.on_delay_changed)
@@ -143,7 +143,7 @@ class MainWindow(QMainWindow):
         self.hp_checkbox = QCheckBox("High-Pass Filter:")
         self.hp_checkbox.toggled.connect(self.on_hp_toggled)
         hp_layout.addWidget(self.hp_checkbox)
-        self.hp_slider = QSlider(Qt.Horizontal)
+        self.hp_slider = QSlider(Qt.Orientation.Horizontal)
         self.hp_slider.setRange(20, 500)
         self.hp_slider.setValue(80)
         self.hp_slider.setEnabled(False)
@@ -159,7 +159,7 @@ class MainWindow(QMainWindow):
         self.lp_checkbox = QCheckBox("Low-Pass Filter:")
         self.lp_checkbox.toggled.connect(self.on_lp_toggled)
         lp_layout.addWidget(self.lp_checkbox)
-        self.lp_slider = QSlider(Qt.Horizontal)
+        self.lp_slider = QSlider(Qt.Orientation.Horizontal)
         self.lp_slider.setRange(1000, 20000)
         self.lp_slider.setValue(16000)
         self.lp_slider.setEnabled(False)
@@ -176,7 +176,7 @@ class MainWindow(QMainWindow):
         # Level meter
         meter_group = QGroupBox("Input Level")
         meter_layout = QHBoxLayout()
-        self.level_bar = QSlider(Qt.Horizontal)
+        self.level_bar = QSlider(Qt.Orientation.Horizontal)
         self.level_bar.setRange(0, 100)
         self.level_bar.setValue(0)
         self.level_bar.setEnabled(False)
@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
         self.expander_checkbox.toggled.connect(self.on_expander_toggled)
         expander_form.addRow("", self.expander_checkbox)
 
-        self.expander_threshold_slider = QSlider(Qt.Horizontal)
+        self.expander_threshold_slider = QSlider(Qt.Orientation.Horizontal)
         self.expander_threshold_slider.setRange(0, 20)
         self.expander_threshold_slider.setValue(1)
         self.expander_threshold_slider.setEnabled(False)
@@ -209,7 +209,7 @@ class MainWindow(QMainWindow):
         threshold_layout.addWidget(self.expander_threshold_label)
         expander_form.addRow("Threshold:", threshold_layout)
 
-        self.expander_ratio_slider = QSlider(Qt.Horizontal)
+        self.expander_ratio_slider = QSlider(Qt.Orientation.Horizontal)
         self.expander_ratio_slider.setRange(15, 100)  # 1.5:1 to 10:1 (x10)
         self.expander_ratio_slider.setValue(20)
         self.expander_ratio_slider.setEnabled(False)
@@ -220,7 +220,7 @@ class MainWindow(QMainWindow):
         ratio_layout.addWidget(self.expander_ratio_label)
         expander_form.addRow("Ratio:", ratio_layout)
 
-        self.expander_attack_slider = QSlider(Qt.Horizontal)
+        self.expander_attack_slider = QSlider(Qt.Orientation.Horizontal)
         self.expander_attack_slider.setRange(1, 50)
         self.expander_attack_slider.setValue(5)
         self.expander_attack_slider.setEnabled(False)
@@ -231,7 +231,7 @@ class MainWindow(QMainWindow):
         attack_layout.addWidget(self.expander_attack_label)
         expander_form.addRow("Attack:", attack_layout)
 
-        self.expander_release_slider = QSlider(Qt.Horizontal)
+        self.expander_release_slider = QSlider(Qt.Orientation.Horizontal)
         self.expander_release_slider.setRange(20, 500)
         self.expander_release_slider.setValue(100)
         self.expander_release_slider.setEnabled(False)
@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
         self.compressor_checkbox.toggled.connect(self.on_compressor_toggled)
         compressor_form.addRow("", self.compressor_checkbox)
 
-        self.compressor_threshold_slider = QSlider(Qt.Horizontal)
+        self.compressor_threshold_slider = QSlider(Qt.Orientation.Horizontal)
         self.compressor_threshold_slider.setRange(-40, 0)
         self.compressor_threshold_slider.setValue(-10)
         self.compressor_threshold_slider.setEnabled(False)
@@ -264,7 +264,7 @@ class MainWindow(QMainWindow):
         comp_thresh_layout.addWidget(self.compressor_threshold_label)
         compressor_form.addRow("Threshold:", comp_thresh_layout)
 
-        self.compressor_ratio_slider = QSlider(Qt.Horizontal)
+        self.compressor_ratio_slider = QSlider(Qt.Orientation.Horizontal)
         self.compressor_ratio_slider.setRange(10, 200)  # 1:1 to 20:1 (x10)
         self.compressor_ratio_slider.setValue(40)
         self.compressor_ratio_slider.setEnabled(False)
@@ -275,7 +275,7 @@ class MainWindow(QMainWindow):
         comp_ratio_layout.addWidget(self.compressor_ratio_label)
         compressor_form.addRow("Ratio:", comp_ratio_layout)
 
-        self.compressor_attack_slider = QSlider(Qt.Horizontal)
+        self.compressor_attack_slider = QSlider(Qt.Orientation.Horizontal)
         self.compressor_attack_slider.setRange(1, 100)
         self.compressor_attack_slider.setValue(10)
         self.compressor_attack_slider.setEnabled(False)
@@ -286,7 +286,7 @@ class MainWindow(QMainWindow):
         comp_attack_layout.addWidget(self.compressor_attack_label)
         compressor_form.addRow("Attack:", comp_attack_layout)
 
-        self.compressor_release_slider = QSlider(Qt.Horizontal)
+        self.compressor_release_slider = QSlider(Qt.Orientation.Horizontal)
         self.compressor_release_slider.setRange(10, 1000)
         self.compressor_release_slider.setValue(100)
         self.compressor_release_slider.setEnabled(False)
@@ -297,7 +297,7 @@ class MainWindow(QMainWindow):
         comp_release_layout.addWidget(self.compressor_release_label)
         compressor_form.addRow("Release:", comp_release_layout)
 
-        self.compressor_makeup_slider = QSlider(Qt.Horizontal)
+        self.compressor_makeup_slider = QSlider(Qt.Orientation.Horizontal)
         self.compressor_makeup_slider.setRange(0, 24)
         self.compressor_makeup_slider.setValue(0)
         self.compressor_makeup_slider.setEnabled(False)
@@ -319,7 +319,7 @@ class MainWindow(QMainWindow):
         self.deesser_checkbox.toggled.connect(self.on_deesser_toggled)
         deesser_form.addRow("", self.deesser_checkbox)
 
-        self.deesser_threshold_slider = QSlider(Qt.Horizontal)
+        self.deesser_threshold_slider = QSlider(Qt.Orientation.Horizontal)
         self.deesser_threshold_slider.setRange(-40, 0)
         self.deesser_threshold_slider.setValue(-20)
         self.deesser_threshold_slider.setEnabled(False)
@@ -330,7 +330,7 @@ class MainWindow(QMainWindow):
         deesser_thresh_layout.addWidget(self.deesser_threshold_label)
         deesser_form.addRow("Threshold:", deesser_thresh_layout)
 
-        self.deesser_reduction_slider = QSlider(Qt.Horizontal)
+        self.deesser_reduction_slider = QSlider(Qt.Orientation.Horizontal)
         self.deesser_reduction_slider.setRange(0, 12)
         self.deesser_reduction_slider.setValue(6)
         self.deesser_reduction_slider.setEnabled(False)
@@ -424,7 +424,7 @@ class MainWindow(QMainWindow):
         if not show_all:
             for i in range(pa.get_host_api_count()):
                 host_info = pa.get_host_api_info_by_index(i)
-                if "WASAPI" in host_info["name"]:
+                if "WASAPI" in str(host_info["name"]):
                     wasapi_index = i
                     break
 
@@ -432,15 +432,15 @@ class MainWindow(QMainWindow):
             device_info = pa.get_device_info_by_index(i)
 
             # Only show WASAPI devices if available and not showing all
-            if wasapi_index is not None and device_info["hostApi"] != wasapi_index:
+            if wasapi_index is not None and int(device_info["hostApi"]) != wasapi_index:
                 continue
 
-            name = device_info["name"]
+            name = str(device_info["name"])
 
-            if device_info["maxInputChannels"] > 0:
+            if int(device_info["maxInputChannels"]) > 0:
                 self.input_combo.addItem(name, i)
 
-            if device_info["maxOutputChannels"] > 0:
+            if int(device_info["maxOutputChannels"]) > 0:
                 self.output_combo.addItem(name, i)
 
         pa.terminate()
