@@ -77,7 +77,7 @@ class MainWindow(QMainWindow):
         gain_layout = QHBoxLayout()
         gain_layout.addWidget(QLabel("Gain:"))
         self.gain_slider = QSlider(Qt.Orientation.Horizontal)
-        self.gain_slider.setRange(-20, 20)
+        self.gain_slider.setRange(-100, 100)
         self.gain_slider.setValue(0)
         self.gain_slider.valueChanged.connect(self.on_gain_changed)
         gain_layout.addWidget(self.gain_slider)
