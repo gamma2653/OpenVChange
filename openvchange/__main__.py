@@ -73,6 +73,12 @@ class MainWindow(QMainWindow):
         filters_group = QGroupBox("Filters")
         filters_layout = QVBoxLayout()
 
+        # Master effects toggle
+        self.effects_checkbox = QCheckBox("Effects Enabled")
+        self.effects_checkbox.setChecked(True)
+        self.effects_checkbox.toggled.connect(self.on_effects_toggled)
+        filters_layout.addWidget(self.effects_checkbox)
+
         # Gain control
         gain_layout = QHBoxLayout()
         gain_layout.addWidget(QLabel("Gain:"))
@@ -449,6 +455,10 @@ class MainWindow(QMainWindow):
         """Handle show all devices checkbox toggle."""
         self.populate_devices()
 
+    def on_effects_toggled(self, checked):
+        self.effects_checkbox.setText("Effects Enabled" if checked else "Effects Bypassed")
+        self.audio_processor.set_effects_enabled(checked)
+
     def on_gain_changed(self, value):
         self.gain_label.setText(f"{value} dB")
         self.audio_processor.set_gain(value)
@@ -564,7 +574,8 @@ class MainWindow(QMainWindow):
 
     def on_reset_defaults(self):
         """Reset all filter settings to their default values."""
-        # Disable filters first
+        # Effects on, filters disabled
+        self.effects_checkbox.setChecked(True)
         self.hp_checkbox.setChecked(False)
         self.lp_checkbox.setChecked(False)
         self.expander_checkbox.setChecked(False)
@@ -604,6 +615,7 @@ class MainWindow(QMainWindow):
     def get_preset(self):
         """Collect current settings into a dict."""
         return {
+            "effects_enabled": self.effects_checkbox.isChecked(),
             "gain": self.gain_slider.value(),
             "bass": self.bass_slider.value(),
             "treble": self.treble_slider.value(),
@@ -638,6 +650,8 @@ class MainWindow(QMainWindow):
     def apply_preset(self, preset):
         """Apply a preset dict to the UI controls."""
         # Checkboxes first
+        if "effects_enabled" in preset:
+            self.effects_checkbox.setChecked(preset["effects_enabled"])
         if "high_pass_enabled" in preset:
             self.hp_checkbox.setChecked(preset["high_pass_enabled"])
         if "low_pass_enabled" in preset:

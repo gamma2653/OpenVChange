@@ -56,6 +56,7 @@ Signal flow (in order):
 
 ## Key Implementation Details
 
+- The Main tab's "Effects Enabled" checkbox sets `AudioProcessor.effects_enabled`; when off, `apply_filters()` returns the input bytes untouched (after emitting the level meter signal) and calls `reset_effect_states()` so re-enabling starts clean
 - Filter coefficients are recalculated when parameters change via `_update_filter_coefficients()`
 - Pitch shift uses circular buffer with 4 overlapping read pointers and crossfade to reduce artifacts
 - Level meter emits Qt signals for thread-safe GUI updates

@@ -27,6 +27,9 @@ class AudioProcessor(QObject):
         # Filter states (preserved between chunks)
         self.filter_states = {}
 
+        # Master effects bypass (False = pass input straight to output)
+        self.effects_enabled = True
+
         # Filter parameters
         self.low_cut = 80
         self.high_cut = 16000
@@ -146,6 +149,18 @@ class AudioProcessor(QObject):
 
         # Fallback
         return 44100
+
+    def set_effects_enabled(self, enabled: bool) -> None:
+        """Enable or bypass the entire effects chain."""
+        self.effects_enabled = enabled
+
+    def reset_effect_states(self) -> None:
+        """Clear filter/envelope state so the chain restarts cleanly."""
+        self.filter_states = {}
+        self.expander_envelope = 1.0
+        self.compressor_envelope_db = -60.0
+        self.deesser_envelope = 0.0
+        self.gain_smoothed = self.gain_target
 
     def set_gain(self, gain_db: float) -> None:
         self.gain_target = 10 ** (gain_db / 20)
@@ -454,6 +469,12 @@ class AudioProcessor(QObject):
         rms = np.sqrt(np.mean(data**2))
         self.level_changed.emit(rms)
 
+        # Master bypass - return input untouched, but drop stale filter state
+        # so re-enabling the chain does not click.
+        if not self.effects_enabled:
+            self.reset_effect_states()
+            return audio_data
+
         # Expander/Gate (smooth envelope-based)
         data = self.apply_expander(data, rms)
 
@@ -553,19 +574,13 @@ class AudioProcessor(QObject):
 
         try:
             self.sample_rate = self.find_common_sample_rate()
-            self.filter_states = {}
+            self.reset_effect_states()
             self.delay_buffer = np.zeros(self.delay_buffer_size, dtype=np.float32)
             self.delay_write_pos = 0
             self.pitch_buffer = np.zeros(self.pitch_buffer_size, dtype=np.float32)
             self.pitch_write_pos = self.pitch_buffer_size // 2
             self.pitch_read_pos = [0.0] * self.pitch_num_voices
             self.pitch_fade_pos = [i / self.pitch_num_voices for i in range(self.pitch_num_voices)]
-
-            # Reset dynamics processor states
-            self.expander_envelope = 1.0
-            self.compressor_envelope_db = -60.0
-            self.deesser_envelope = 0.0
-            self.gain_smoothed = self.gain_target
 
             # Use full-duplex stream for synchronized I/O
             self.stream = self.pa.open(
