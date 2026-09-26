@@ -15,6 +15,9 @@ scipy = "^1.11.0"
 [tool.poetry.scripts]
 openvchange = "openvchange.__main__:main"
 
+[tool.poetry.group.dev.dependencies]
+pyinstaller = "^6.22.3"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"

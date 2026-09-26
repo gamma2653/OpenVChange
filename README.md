@@ -79,6 +79,17 @@ openvchange
 4. **Stop** — End processing
 5. **Reset to Defaults** — Restore all parameters to neutral values
 
+## Building a Standalone Executable
+
+PyInstaller is included as a dev dependency. To produce a self-contained Windows build that does not require Python:
+
+```bash
+poetry install --with dev
+poetry run pyinstaller openvchange.spec
+```
+
+The result is a single self-contained `dist/OpenVChange-<version>.exe`, where the version comes from `pyproject.toml`. The spec file trims unused Qt modules, so the build is roughly 65 MB. Because it is a one-file build, the exe unpacks itself to a temp directory on launch, so the first window takes a few seconds to appear.
+
 ## Technical Details
 
 | Parameter | Value |

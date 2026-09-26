@@ -14,6 +14,9 @@ poetry install
 
 # Run the application
 poetry run openvchange
+
+# Build a standalone one-file Windows executable (output: dist/OpenVChange-<version>.exe)
+poetry run pyinstaller openvchange.spec
 ```
 
 Note: No test framework or linting tools are currently configured.
