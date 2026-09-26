@@ -74,7 +74,7 @@ class MainWindow(QMainWindow):
         filters_layout = QVBoxLayout()
 
         # Master effects toggle
-        self.effects_checkbox = QCheckBox("Effects Enabled")
+        self.effects_checkbox = QCheckBox("Enable Effects")
         self.effects_checkbox.setChecked(True)
         self.effects_checkbox.toggled.connect(self.on_effects_toggled)
         filters_layout.addWidget(self.effects_checkbox)
@@ -456,7 +456,6 @@ class MainWindow(QMainWindow):
         self.populate_devices()
 
     def on_effects_toggled(self, checked):
-        self.effects_checkbox.setText("Effects Enabled" if checked else "Effects Bypassed")
         self.audio_processor.set_effects_enabled(checked)
 
     def on_gain_changed(self, value):
