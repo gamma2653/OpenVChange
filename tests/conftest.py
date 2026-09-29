@@ -8,6 +8,7 @@ import pyaudio
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from openvchange import settings
 from tests.fakes import FakePyAudio
 
 
@@ -18,6 +19,14 @@ def fake_pyaudio(monkeypatch):
     monkeypatch.setattr(pyaudio, "PyAudio", FakePyAudio)
     yield FakePyAudio
     FakePyAudio.reset()
+
+
+@pytest.fixture(autouse=True)
+def settings_path(monkeypatch, tmp_path):
+    """Keep every test away from the real settings of whoever runs the tests."""
+    path = tmp_path / "config" / "settings.json"
+    monkeypatch.setattr(settings, "default_path", lambda: path)
+    return path
 
 
 @pytest.fixture(scope="session")

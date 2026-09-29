@@ -80,6 +80,12 @@ The codebase has three modules:
 - A preset is checked in full before anything is applied. Wrong types refuse the preset; out-of-range numbers are clamped and reported
 - Preset keys and their units (slider units, not engine units) are a file format. Do not rename keys or change what a value means: users have presets on disk
 
+**`openvchange/settings.py`** - What is remembered between launches
+- Devices (by identity), the device filter, and the effect settings, as `settings.json` in the per-user configuration folder (`%APPDATA%\OpenVChange` on Windows)
+- The effect settings inside it have the same form as a preset and go through the same checks
+- Saved when the window closes, restored after the device lists are filled. A damaged file is reported in the status line and never prevents startup
+- Tests redirect `settings.default_path` to a temporary folder (`tests/conftest.py`), so they never read or write real settings
+
 ## Audio Processing Pipeline
 
 Signal flow (in order):

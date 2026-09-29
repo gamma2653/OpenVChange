@@ -1,5 +1,6 @@
 """Main entry point for OpenVChange audio routing application."""
 
+import logging
 import sys
 
 from PySide6.QtCore import Qt
@@ -21,8 +22,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from openvchange import presets
+from openvchange import presets, settings
 from openvchange.audio import AudioProcessor, AudioStartError
+
+logger = logging.getLogger(__name__)
 
 # Where each entry of a device list keeps the name and host API of its device.
 DEVICE_IDENTITY_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -31,8 +34,10 @@ DEVICE_IDENTITY_ROLE = Qt.ItemDataRole.UserRole + 1
 class MainWindow(QMainWindow):
     """Main application window."""
 
-    def __init__(self):
+    def __init__(self, settings_path=None):
         super().__init__()
+        self.settings_path = settings_path or settings.default_path()
+        self.closed = False
         self.setWindowTitle("OpenVChange - Virtual Audio Router")
         self.setMinimumSize(500, 580)
 
@@ -43,6 +48,7 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
         self.populate_devices()
+        self.restore_settings()
 
     def init_ui(self):
         """Initialize the user interface."""
@@ -793,6 +799,59 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Status: Stopped")
         self.level_bar.setValue(0)
 
+    def restore_settings(self):
+        """Bring back the devices and settings from the last session, where possible."""
+        try:
+            saved = settings.load(self.settings_path)
+            if not saved:
+                return
+            show_all = saved.get("show_all_devices", False)
+            if not isinstance(show_all, bool):
+                raise settings.SettingsError("the file is damaged")
+            notes = self.apply_preset(saved.get("preset", {}))
+        except (settings.SettingsError, presets.PresetError) as e:
+            logger.warning("Could not restore settings from %s: %s", self.settings_path, e)
+            self.status_label.setText(f"Status: Your saved settings could not be restored: {e}")
+            return
+
+        self.show_all_devices_checkbox.setChecked(show_all)
+        missing = [
+            kind
+            for kind, combo in (("input", self.input_combo), ("output", self.output_combo))
+            if not self.select_device(combo, saved.get(f"{kind}_device"))
+        ]
+        if missing:
+            notes.append(f"the {' and '.join(missing)} device used last time was not found")
+        if notes:
+            status = f"Status: Stopped ({'; '.join(notes)})"
+            self.status_label.setText(status)
+            self.status_label.setToolTip(status)
+
+    def select_device(self, combo, identity):
+        """Select the device with this identity. Returns False if one was asked for but is gone."""
+        if identity is None:
+            return True
+        index = combo.findData(identity, DEVICE_IDENTITY_ROLE) if isinstance(identity, str) else -1
+        if index < 0:
+            return False
+        combo.setCurrentIndex(index)
+        return True
+
+    def save_settings(self):
+        """Remember the devices and settings for the next session."""
+        data = {
+            "version": 1,
+            "input_device": self.input_combo.currentData(DEVICE_IDENTITY_ROLE),
+            "output_device": self.output_combo.currentData(DEVICE_IDENTITY_ROLE),
+            "show_all_devices": self.show_all_devices_checkbox.isChecked(),
+            "preset": self.get_preset(),
+        }
+        try:
+            settings.save(self.settings_path, data)
+        except settings.SettingsError as e:
+            # Closing must not fail because of this, and there is nobody left to tell.
+            logger.warning("Could not save settings to %s: %s", self.settings_path, e)
+
     def on_audio_error(self, message):
         """Stop after the engine has failed, and say why."""
         self.on_stop()
@@ -800,6 +859,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event."""
+        if not self.closed:
+            self.closed = True
+            self.save_settings()
         self.audio_processor.shut_down()
         event.accept()
 
