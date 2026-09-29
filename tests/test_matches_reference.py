@@ -122,6 +122,75 @@ def test_gain_settles_and_then_stays_put():
     assert settled == pytest.approx(10 ** (6 / 20), rel=1e-12)
 
 
+# --- pitch shift ---------------------------------------------------------------
+
+
+def assert_same_audio(out: np.ndarray, expected: np.ndarray) -> None:
+    """Equal to within one float32 step.
+
+    Both sides call the same maths library, but on whole buffers it may take a different
+    code path than on single samples, and the two are allowed to round differently.
+    """
+    assert out.dtype == expected.dtype == np.float32
+    np.testing.assert_array_max_ulp(out, expected, maxulp=1)
+
+
+def compare_pitch_shift(semitones: float, voices: int, sizes: list[int], total: int, dtype: type = np.float32):
+    chain = EffectsChain(SAMPLE_RATE)
+    chain.set_pitch_num_voices(voices)
+    chain.set_pitch(semitones)
+    chain.reset()
+    state = reference_dsp.PitchState(voices)
+
+    for block in buffers(total, sizes, dtype=dtype):
+        expected = reference_dsp.pitch_shift(block, semitones, state)
+        assert_same_audio(chain.apply_pitch_shift(block), expected)
+
+        assert chain.pitch_write_pos == state.write_pos
+        assert chain.pitch_read_pos == state.read_pos
+        assert chain.pitch_fade_pos == state.fade_pos
+        assert np.array_equal(chain.pitch_buffer, state.buffer)
+
+
+@pytest.mark.parametrize("semitones", [12.0, 7.0, 0.1, -2.3, -5.0, -12.0])
+@pytest.mark.parametrize("voices", [1, 3, 4, 8])
+def test_pitch_shift_matches_reference(semitones, voices):
+    compare_pitch_shift(semitones, voices, [1024], total=20_000)
+
+
+@pytest.mark.parametrize("sizes", [[128], [4096], [300, 1024, 17, 2049]])
+@pytest.mark.parametrize("semitones", [5.0, -7.5])
+def test_pitch_shift_matches_reference_at_any_buffer_size(sizes, semitones):
+    compare_pitch_shift(semitones, 4, sizes, total=30_000)
+
+
+@pytest.mark.parametrize("semitones", [24.0, 19.0, -24.0, -40.0])
+def test_pitch_shift_matches_reference_beyond_the_slider_range(semitones):
+    # Far enough that the voices overtake the write position or fall a full buffer behind.
+    compare_pitch_shift(semitones, 4, [1024, 4096], total=40_000)
+
+
+def test_pitch_shift_matches_reference_on_buffers_longer_than_its_own():
+    compare_pitch_shift(4.0, 4, [20_000], total=40_000)
+
+
+def test_pitch_shift_matches_reference_with_double_precision_input():
+    compare_pitch_shift(-3.0, 4, [1024], total=12_000, dtype=np.float64)
+
+
+def test_pitch_shift_matches_reference_when_the_setting_changes():
+    chain = EffectsChain(SAMPLE_RATE)
+    chain.reset()
+    state = reference_dsp.PitchState()
+    settings = [4.0, 4.0, -9.0, 11.5, -0.5, 2.0]
+
+    for i, block in enumerate(buffers(40_000, [1024, 512])):
+        semitones = settings[(i // 4) % len(settings)]
+        chain.set_pitch(semitones)
+        assert_same_audio(chain.apply_pitch_shift(block), reference_dsp.pitch_shift(block, semitones, state))
+        assert chain.pitch_read_pos == state.read_pos
+
+
 # --- filter coefficients -------------------------------------------------------
 
 

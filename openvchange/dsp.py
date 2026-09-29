@@ -307,75 +307,130 @@ class EffectsChain:
 
         return output
 
-    def apply_pitch_shift(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def apply_pitch_shift(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Apply pitch shift using multi-pointer delay line with crossfade.
 
         Multiple read pointers traverse a circular buffer at the shifted rate.
         Each pointer has an independent fade phase that controls its amplitude.
-        When a pointer's fade reaches zero, it resets to a new position.
+        When the fade of a pointer reaches zero, it resets to a new position.
         More pointers = smoother sound with less artifacts.
         """
         if abs(self.pitch_semitones) < 0.1:
             return data
 
-        shift_factor = 2 ** (self.pitch_semitones / 12.0)
-        window_size = self.pitch_window_size
-        buf_size = self.pitch_buffer_size
-        num_voices = self.pitch_num_voices
-
-        # Fade phase increment per sample
-        fade_inc = 1.0 / window_size
-
-        output = np.zeros(len(data), dtype=np.float32)
-
-        for i in range(len(data)):
-            # Write input to circular buffer
-            self.pitch_buffer[self.pitch_write_pos] = data[i]
-
-            # Process all voices
-            mixed_sample = 0.0
-            total_weight = 0.0
-
-            for v in range(num_voices):
-                # Read with linear interpolation
-                idx = int(self.pitch_read_pos[v]) % buf_size
-                frac = self.pitch_read_pos[v] - int(self.pitch_read_pos[v])
-                sample = (self.pitch_buffer[idx] * (1 - frac) +
-                         self.pitch_buffer[(idx + 1) % buf_size] * frac)
-
-                # Hann window for crossfade
-                fade = 0.5 * (1.0 - np.cos(2.0 * np.pi * self.pitch_fade_pos[v]))
-
-                mixed_sample += sample * fade
-                total_weight += fade
-
-                # Advance read position at shifted rate
-                self.pitch_read_pos[v] += shift_factor
-
-                # Wrap read position
-                if self.pitch_read_pos[v] >= buf_size:
-                    self.pitch_read_pos[v] -= buf_size
-                elif self.pitch_read_pos[v] < 0:
-                    self.pitch_read_pos[v] += buf_size
-
-                # Advance fade position
-                self.pitch_fade_pos[v] += fade_inc
-
-                # Reset when fade cycle completes
-                if self.pitch_fade_pos[v] >= 1.0:
-                    self.pitch_fade_pos[v] -= 1.0
-                    self.pitch_read_pos[v] = float((self.pitch_write_pos - buf_size // 2) % buf_size)
-
-            # Output mixed sample
-            if total_weight > 0.001:
-                output[i] = mixed_sample / total_weight
-            else:
-                output[i] = 0.0
-
-            # Advance write position
-            self.pitch_write_pos = (self.pitch_write_pos + 1) % buf_size
-
+        samples = data.astype(np.float32)
+        output = np.empty(len(samples), dtype=np.float32)
+        # A piece must fit in the buffer, or it would overwrite what it still has to read.
+        piece_size = self.pitch_buffer_size
+        for start in range(0, len(samples), piece_size):
+            piece = samples[start : start + piece_size]
+            output[start : start + len(piece)] = self._pitch_shift_piece(piece)
         return output
+
+    def _pitch_shift_piece(self, piece: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+        n = len(piece)
+        size = self.pitch_buffer_size
+        buf = self.pitch_buffer
+        write_start = self.pitch_write_pos
+        shift_factor = 2 ** (self.pitch_semitones / 12.0)
+        fade_inc = 1.0 / self.pitch_window_size
+
+        # Write the whole piece first, keeping what it overwrites: a voice reading a
+        # slot before its sample has been written must still see the old content.
+        written = (write_start + np.arange(n)) % size
+        overwritten = buf[written].copy()
+        buf[written] = piece
+        sample_index = np.arange(n)
+
+        mixed = np.zeros(n, dtype=np.float64)
+        total_weight = np.zeros(n, dtype=np.float64)
+        for v in range(self.pitch_num_voices):
+            positions, fades = self._pitch_voice_path(v, n, write_start, shift_factor, fade_inc)
+
+            # Read with linear interpolation
+            whole = positions.astype(np.int64)
+            frac = positions - whole
+            idx = whole % size
+            sample = self._pitch_read(idx, sample_index, write_start, overwritten) * (1 - frac) + (
+                self._pitch_read((idx + 1) % size, sample_index, write_start, overwritten) * frac
+            )
+
+            # Hann window for crossfade
+            fade = 0.5 * (1.0 - np.cos(2.0 * np.pi * fades))
+            mixed += sample * fade
+            total_weight += fade
+
+        self.pitch_write_pos = (write_start + n) % size
+        audible = total_weight > 0.001
+        return np.where(audible, mixed / np.where(audible, total_weight, 1.0), 0.0).astype(np.float32)
+
+    def _pitch_read(
+        self,
+        idx: npt.NDArray[np.int64],
+        sample_index: npt.NDArray[np.int64],
+        write_start: int,
+        overwritten: npt.NDArray[np.float32],
+    ) -> npt.NDArray[np.float64]:
+        """Buffer content at `idx` as each sample would have seen it."""
+        values = self.pitch_buffer[idx].astype(np.float64)
+        # Slots this piece wrote to, counted from its first sample.
+        slot = (idx - write_start) % self.pitch_buffer_size
+        not_yet_written = (slot < len(overwritten)) & (slot > sample_index)
+        values[not_yet_written] = overwritten[slot[not_yet_written]]
+        return values
+
+    def _pitch_voice_path(
+        self, v: int, n: int, write_start: int, shift_factor: float, fade_inc: float
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Read position and fade phase of one voice for each of the next `n` samples.
+
+        Both advance by repeated addition, which `np.add.accumulate` reproduces exactly.
+        The run is cut wherever the read position wraps or the fade completes a cycle.
+        """
+        size = self.pitch_buffer_size
+        positions = np.empty(n, dtype=np.float64)
+        fades = np.empty(n, dtype=np.float64)
+        read_pos = self.pitch_read_pos[v]
+        fade_pos = self.pitch_fade_pos[v]
+
+        done = 0
+        while done < n:
+            remaining = n - done
+            steps = np.empty(remaining + 1, dtype=np.float64)
+            steps[0] = read_pos
+            steps[1:] = shift_factor
+            run_positions = np.add.accumulate(steps)
+            steps[0] = fade_pos
+            steps[1:] = fade_inc
+            run_fades = np.add.accumulate(steps)
+
+            # Element k + 1 is the state after sample k. Find the first sample that
+            # ends with a wrap or a completed fade.
+            event = (run_positions[1:] >= size) | (run_positions[1:] < 0) | (run_fades[1:] >= 1.0)
+            count = int(np.argmax(event)) + 1 if event.any() else remaining
+
+            positions[done : done + count] = run_positions[:count]
+            fades[done : done + count] = run_fades[:count]
+            read_pos = float(run_positions[count])
+            fade_pos = float(run_fades[count])
+
+            # Wrap read position
+            if read_pos >= size:
+                read_pos -= size
+            elif read_pos < 0:
+                read_pos += size
+
+            # Reset when fade cycle completes
+            if fade_pos >= 1.0:
+                fade_pos -= 1.0
+                write_pos = (write_start + done + count - 1) % size
+                read_pos = float((write_pos - size // 2) % size)
+
+            done += count
+
+        self.pitch_read_pos[v] = read_pos
+        self.pitch_fade_pos[v] = fade_pos
+        return positions, fades
 
     def apply_delay(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.float32]:
         """Delay the signal through a circular buffer."""
