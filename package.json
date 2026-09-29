@@ -1,6 +1,6 @@
 {
   "name": "openvchange",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Release tooling for OpenVChange. The application itself is Python; this manifest exists so Changesets can track the version.",
   "type": "module",
