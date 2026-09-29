@@ -90,6 +90,22 @@ poetry run pyinstaller openvchange.spec
 
 The result is a single self-contained `dist/OpenVChange-<version>.exe`, where the version comes from `pyproject.toml`. The spec file trims unused Qt modules, so the build is roughly 65 MB. Because it is a one-file build, the exe unpacks itself to a temp directory on launch, so the first window takes a few seconds to appear.
 
+## Releasing
+
+Versions and the changelog are managed with [Changesets](https://changesets.dev). This needs Node 22.11 or newer, used only for release tooling.
+
+```bash
+npm install          # once, to install the Changesets CLI
+npm run changeset    # describe a change and pick patch, minor, or major
+```
+
+Commit the generated file in `.changeset/` along with your change. After that, releases are automatic:
+
+1. Pushing to `main` with pending changesets opens or updates a **Version OpenVChange** pull request. It bumps the version in `package.json` and `pyproject.toml` and writes `CHANGELOG.md`.
+2. Merging that pull request builds the Windows executable and publishes a GitHub release tagged `v<version>`, with the executable attached and the changelog entry as release notes.
+
+Versions below 1.0.0 are published as pre-releases. The workflow lives in `.github/workflows/release.yml`.
+
 ## Technical Details
 
 | Parameter | Value |

@@ -1,0 +1,19 @@
+{
+  "name": "openvchange",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Release tooling for OpenVChange. The application itself is Python; this manifest exists so Changesets can track the version.",
+  "type": "module",
+  "engines": {
+    "node": "^22.11 || ^24 || >=26"
+  },
+  "scripts": {
+    "changeset": "changeset",
+    "version-packages": "changeset version && node scripts/sync-version.mjs",
+    "check-version": "node scripts/sync-version.mjs --check",
+    "release-notes": "node scripts/release-notes.mjs"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3"
+  }
+}
