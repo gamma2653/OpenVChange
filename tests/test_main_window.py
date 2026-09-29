@@ -207,14 +207,130 @@ def test_save_and_load_preset_files(window, tmp_path, monkeypatch):
     assert window.status_label.text() == "Status: Preset loaded"
 
 
-def test_loading_a_file_that_is_not_json_reports_failure(window, tmp_path, monkeypatch):
-    path = tmp_path / "broken.json"
-    path.write_text("{ not json")
+def load_text(window, tmp_path, monkeypatch, text: str) -> str:
+    """Load a preset file with the given content and return the status line."""
+    path = tmp_path / "preset.json"
+    path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(path), ""))
-
     window.on_load_preset()
+    return window.status_label.text()
 
-    assert window.status_label.text() == "Status: Failed to load preset"
+
+def test_loading_a_file_that_is_not_json_reports_failure(window, tmp_path, monkeypatch):
+    status = load_text(window, tmp_path, monkeypatch, '{\n  "gain": 3,\n  not json')
+    assert status == "Status: Could not load preset: the file is not valid JSON (line 3)"
+
+
+@pytest.mark.parametrize(
+    ("text", "problem"),
+    [
+        ("[1, 2, 3]", "the file does not contain a preset"),
+        ('"gain"', "the file does not contain a preset"),
+        ('{"gain": "loud"}', "'gain' must be a whole number, not the text \"loud\""),
+        ('{"gain": 2.5}', "'gain' must be a whole number, not 2.5"),
+        ('{"gain": true}', "'gain' must be a whole number, not true"),
+        ('{"gain": null}', "'gain' must be a whole number, not empty"),
+        ('{"pitch": [1]}', "'pitch' must be a whole number, not a list"),
+        ('{"buffer_size": "big"}', "'buffer_size' must be a whole number, not the text \"big\""),
+        ('{"compressor_enabled": 1}', "'compressor_enabled' must be true or false, not 1"),
+        ('{"effects_enabled": "yes"}', "'effects_enabled' must be true or false, not the text \"yes\""),
+    ],
+)
+def test_preset_with_a_wrong_value_is_refused_and_nothing_is_applied(window, tmp_path, monkeypatch, text, problem):
+    before = window.get_preset()
+    # A valid setting alongside the bad one must not be applied either.
+    text = text if not text.startswith("{") else '{"treble": 9, ' + text[1:]
+
+    status = load_text(window, tmp_path, monkeypatch, text)
+
+    assert status == f"Status: Could not load preset: {problem}"
+    assert window.get_preset() == before
+
+
+def test_out_of_range_values_are_brought_into_range_and_mentioned(window, tmp_path, monkeypatch):
+    status = load_text(window, tmp_path, monkeypatch, '{"gain": 500, "pitch": -999, "treble": 4}')
+
+    assert window.gain_slider.value() == 100
+    assert window.pitch_slider.value() == -120
+    assert window.treble_slider.value() == 4
+    assert status == (
+        "Status: Preset loaded ('gain' was changed from 500 to 100 to fit its range; "
+        "'pitch' was changed from -999 to -120 to fit its range)"
+    )
+
+
+def test_unknown_buffer_size_is_left_unchanged_and_mentioned(window, tmp_path, monkeypatch):
+    status = load_text(window, tmp_path, monkeypatch, '{"buffer_size": 1000, "gain": 2}')
+
+    assert window.buffer_size_combo.currentData() == 1024
+    assert window.gain_slider.value() == 2
+    assert "'buffer_size' was left unchanged: 1000 is not one of 128, 256, 512, 1024, 2048, 4096" in status
+
+
+def test_whole_numbers_written_as_decimals_are_accepted(window, tmp_path, monkeypatch):
+    status = load_text(window, tmp_path, monkeypatch, '{"gain": 6.0}')
+    assert status == "Status: Preset loaded"
+    assert window.gain_slider.value() == 6
+
+
+def test_settings_from_a_newer_version_are_ignored(window, tmp_path, monkeypatch):
+    status = load_text(window, tmp_path, monkeypatch, '{"gain": 3, "reverb_size": 40, "future": {"a": 1}}')
+    assert status == "Status: Preset loaded"
+    assert window.gain_slider.value() == 3
+
+
+def test_loading_a_missing_file_reports_failure(window, tmp_path, monkeypatch):
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", lambda *a, **k: (str(tmp_path / "gone.json"), ""))
+    window.on_load_preset()
+    assert window.status_label.text() == (
+        "Status: Could not load preset: the file could not be read (no such file or directory)"
+    )
+
+
+def test_saving_to_a_place_that_cannot_be_written_reports_failure(window, tmp_path, monkeypatch):
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(tmp_path / "missing" / "p.json"), ""))
+    window.on_save_preset()
+    assert window.status_label.text() == (
+        "Status: Could not save preset: the file could not be written (no such file or directory)"
+    )
+
+
+def test_preset_loaded_while_running_does_not_touch_the_running_stream(window, tmp_path, monkeypatch):
+    window.on_start()
+    engine = window.audio_processor
+    voices_before = engine.effects.pitch_read_pos
+
+    status = load_text(window, tmp_path, monkeypatch, json.dumps(LEGACY_PRESET))
+
+    # The controls show what the preset asks for...
+    assert window.buffer_size_combo.currentData() == 4096
+    assert window.pitch_voices_spin.value() == 6
+    # ...but the running engine keeps what it started with.
+    assert engine.chunk_size == 1024
+    assert engine.effects.pitch_num_voices == 4
+    assert engine.effects.pitch_read_pos is voices_before
+    assert status == "Status: Preset loaded (buffer size and pitch voices take effect at the next start)"
+    # Everything else applies at once.
+    assert engine.effects.pitch_semitones == pytest.approx(-2.3)
+
+
+def test_stream_settings_from_a_preset_take_effect_at_the_next_start(window, tmp_path, monkeypatch):
+    window.on_start()
+    load_text(window, tmp_path, monkeypatch, json.dumps(LEGACY_PRESET))
+
+    window.on_stop()
+    assert window.audio_processor.chunk_size == 4096
+    assert window.effects.pitch_num_voices == 6
+
+    window.on_start()
+    assert window.audio_processor.pa.streams[-1].kwargs["frames_per_buffer"] == 4096
+    assert len(window.effects.pitch_read_pos) == 6
+
+
+def test_preset_loaded_while_running_says_nothing_if_stream_settings_are_unchanged(window, tmp_path, monkeypatch):
+    window.on_start()
+    status = load_text(window, tmp_path, monkeypatch, '{"gain": 4, "buffer_size": 1024, "pitch_voices": 4}')
+    assert status == "Status: Preset loaded"
 
 
 def test_cancelling_a_preset_dialog_changes_nothing(window, monkeypatch):

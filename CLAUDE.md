@@ -72,6 +72,12 @@ The codebase has three modules:
 - `reset()` clears all history when a stream starts; `reset_effect_states()` clears only filter and envelope state and is used by the bypass
 - Stateful filter implementation using `scipy.lfilter` with `lfilter_zi` for continuous processing without clicks/pops
 
+**`openvchange/presets.py`** - Preset files
+- Reads, checks, and writes presets; no Qt
+- `MainWindow.preset_controls()` maps each preset key to its control and is the single list that saving, loading, and checking all use. A new setting only needs an entry there
+- A preset is checked in full before anything is applied. Wrong types refuse the preset; out-of-range numbers are clamped and reported
+- Preset keys and their units (slider units, not engine units) are a file format. Do not rename keys or change what a value means: users have presets on disk
+
 ## Audio Processing Pipeline
 
 Signal flow (in order):
@@ -103,5 +109,6 @@ Signal flow (in order):
 - Expander: attack is how fast the gate opens, release how fast it closes. Its gain is smoothed in dB and bottoms out at `EXPANDER_FLOOR_DB`
 - Level meter emits Qt signals for thread-safe GUI updates
 - PyAudio callback runs in separate thread; use Qt signals to communicate with GUI
+- Buffer size and pitch voice count are stream settings: the engine reads them while processing, so `MainWindow.apply_stream_settings()` only passes them on while the stream is stopped
 - The callback must never raise and must never return the input on failure: for a voice changer, leaking the unprocessed voice is worse than silence. On an error it returns silence and emits `error_occurred`, and the window stops the stream
 - `AudioProcessor.start()` raises `AudioStartError` with a message fit for the status line. The packaged app has no console, so `print` reaches nobody; use `logging` for detail and the status line for the user

@@ -1,6 +1,5 @@
 """Main entry point for OpenVChange audio routing application."""
 
-import json
 import sys
 
 import pyaudio
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from openvchange import presets
 from openvchange.audio import AudioProcessor, AudioStartError
 
 
@@ -565,13 +565,29 @@ class MainWindow(QMainWindow):
 
     def on_buffer_size_changed(self, index):
         """Handle buffer size combo box change."""
-        size = self.buffer_size_combo.currentData()
-        if size is not None:
-            self.audio_processor.set_chunk_size(size)
+        self.apply_stream_settings()
 
     def on_pitch_voices_changed(self, value):
         """Handle pitch voices spin box change."""
-        self.effects.set_pitch_num_voices(value)
+        self.apply_stream_settings()
+
+    def stream_settings(self):
+        """The settings that are fixed for as long as a stream runs."""
+        return (self.buffer_size_combo.currentData(), self.pitch_voices_spin.value())
+
+    def apply_stream_settings(self):
+        """Pass the stream settings to the engine, unless it is running.
+
+        The engine reads them while it processes, so they must not change under it. The
+        controls are locked while it runs, but a preset can still change them. They are
+        applied again at each start.
+        """
+        if self.audio_processor.running:
+            return
+        buffer_size, voices = self.stream_settings()
+        if buffer_size is not None:
+            self.audio_processor.set_chunk_size(buffer_size)
+        self.effects.set_pitch_num_voices(voices)
 
     def on_reset_defaults(self):
         """Reset all filter settings to their default values."""
@@ -613,132 +629,118 @@ class MainWindow(QMainWindow):
         self.buffer_size_combo.setCurrentIndex(3)  # 1024
         self.pitch_voices_spin.setValue(4)
 
-    def get_preset(self):
-        """Collect current settings into a dict."""
+    def preset_controls(self):
+        """The controls a preset covers, by the name each has in a preset file."""
         return {
-            "effects_enabled": self.effects_checkbox.isChecked(),
-            "gain": self.gain_slider.value(),
-            "bass": self.bass_slider.value(),
-            "treble": self.treble_slider.value(),
-            "pitch": self.pitch_slider.value(),
-            "delay": self.delay_slider.value(),
-            "high_pass_enabled": self.hp_checkbox.isChecked(),
-            "high_pass_freq": self.hp_slider.value(),
-            "low_pass_enabled": self.lp_checkbox.isChecked(),
-            "low_pass_freq": self.lp_slider.value(),
+            "effects_enabled": self.effects_checkbox,
+            "gain": self.gain_slider,
+            "bass": self.bass_slider,
+            "treble": self.treble_slider,
+            "pitch": self.pitch_slider,
+            "delay": self.delay_slider,
+            "high_pass_enabled": self.hp_checkbox,
+            "high_pass_freq": self.hp_slider,
+            "low_pass_enabled": self.lp_checkbox,
+            "low_pass_freq": self.lp_slider,
             # Expander
-            "expander_enabled": self.expander_checkbox.isChecked(),
-            "expander_threshold": self.expander_threshold_slider.value(),
-            "expander_ratio": self.expander_ratio_slider.value(),
-            "expander_attack": self.expander_attack_slider.value(),
-            "expander_release": self.expander_release_slider.value(),
+            "expander_enabled": self.expander_checkbox,
+            "expander_threshold": self.expander_threshold_slider,
+            "expander_ratio": self.expander_ratio_slider,
+            "expander_attack": self.expander_attack_slider,
+            "expander_release": self.expander_release_slider,
             # Compressor
-            "compressor_enabled": self.compressor_checkbox.isChecked(),
-            "compressor_threshold": self.compressor_threshold_slider.value(),
-            "compressor_ratio": self.compressor_ratio_slider.value(),
-            "compressor_attack": self.compressor_attack_slider.value(),
-            "compressor_release": self.compressor_release_slider.value(),
-            "compressor_makeup": self.compressor_makeup_slider.value(),
+            "compressor_enabled": self.compressor_checkbox,
+            "compressor_threshold": self.compressor_threshold_slider,
+            "compressor_ratio": self.compressor_ratio_slider,
+            "compressor_attack": self.compressor_attack_slider,
+            "compressor_release": self.compressor_release_slider,
+            "compressor_makeup": self.compressor_makeup_slider,
             # De-esser
-            "deesser_enabled": self.deesser_checkbox.isChecked(),
-            "deesser_threshold": self.deesser_threshold_slider.value(),
-            "deesser_reduction": self.deesser_reduction_slider.value(),
+            "deesser_enabled": self.deesser_checkbox,
+            "deesser_threshold": self.deesser_threshold_slider,
+            "deesser_reduction": self.deesser_reduction_slider,
             # Advanced
-            "buffer_size": self.buffer_size_combo.currentData(),
-            "pitch_voices": self.pitch_voices_spin.value(),
+            "buffer_size": self.buffer_size_combo,
+            "pitch_voices": self.pitch_voices_spin,
         }
 
+    def preset_fields(self):
+        """What each control accepts, for checking a preset before it is applied."""
+        fields = {}
+        for name, control in self.preset_controls().items():
+            if isinstance(control, QCheckBox):
+                fields[name] = presets.Toggle()
+            elif isinstance(control, QComboBox):
+                fields[name] = presets.Choice(tuple(control.itemData(i) for i in range(control.count())))
+            else:
+                fields[name] = presets.Number(control.minimum(), control.maximum())
+        return fields
+
+    def get_preset(self):
+        """Collect current settings into a dict."""
+        preset = {}
+        for name, control in self.preset_controls().items():
+            if isinstance(control, QCheckBox):
+                preset[name] = control.isChecked()
+            elif isinstance(control, QComboBox):
+                preset[name] = control.currentData()
+            else:
+                preset[name] = control.value()
+        return preset
+
     def apply_preset(self, preset):
-        """Apply a preset dict to the UI controls."""
-        # Checkboxes first
-        if "effects_enabled" in preset:
-            self.effects_checkbox.setChecked(preset["effects_enabled"])
-        if "high_pass_enabled" in preset:
-            self.hp_checkbox.setChecked(preset["high_pass_enabled"])
-        if "low_pass_enabled" in preset:
-            self.lp_checkbox.setChecked(preset["low_pass_enabled"])
-        if "expander_enabled" in preset:
-            self.expander_checkbox.setChecked(preset["expander_enabled"])
-        if "compressor_enabled" in preset:
-            self.compressor_checkbox.setChecked(preset["compressor_enabled"])
-        if "deesser_enabled" in preset:
-            self.deesser_checkbox.setChecked(preset["deesser_enabled"])
+        """Apply a preset to the controls.
 
-        # Main sliders
-        if "gain" in preset:
-            self.gain_slider.setValue(preset["gain"])
-        if "bass" in preset:
-            self.bass_slider.setValue(preset["bass"])
-        if "treble" in preset:
-            self.treble_slider.setValue(preset["treble"])
-        if "pitch" in preset:
-            self.pitch_slider.setValue(preset["pitch"])
-        if "delay" in preset:
-            self.delay_slider.setValue(preset["delay"])
-        if "high_pass_freq" in preset:
-            self.hp_slider.setValue(preset["high_pass_freq"])
-        if "low_pass_freq" in preset:
-            self.lp_slider.setValue(preset["low_pass_freq"])
-
-        # Expander
-        if "expander_threshold" in preset:
-            self.expander_threshold_slider.setValue(preset["expander_threshold"])
-        if "expander_ratio" in preset:
-            self.expander_ratio_slider.setValue(preset["expander_ratio"])
-        if "expander_attack" in preset:
-            self.expander_attack_slider.setValue(preset["expander_attack"])
-        if "expander_release" in preset:
-            self.expander_release_slider.setValue(preset["expander_release"])
-
-        # Compressor
-        if "compressor_threshold" in preset:
-            self.compressor_threshold_slider.setValue(preset["compressor_threshold"])
-        if "compressor_ratio" in preset:
-            self.compressor_ratio_slider.setValue(preset["compressor_ratio"])
-        if "compressor_attack" in preset:
-            self.compressor_attack_slider.setValue(preset["compressor_attack"])
-        if "compressor_release" in preset:
-            self.compressor_release_slider.setValue(preset["compressor_release"])
-        if "compressor_makeup" in preset:
-            self.compressor_makeup_slider.setValue(preset["compressor_makeup"])
-
-        # De-esser
-        if "deesser_threshold" in preset:
-            self.deesser_threshold_slider.setValue(preset["deesser_threshold"])
-        if "deesser_reduction" in preset:
-            self.deesser_reduction_slider.setValue(preset["deesser_reduction"])
-
-        # Advanced
-        if "buffer_size" in preset:
-            index = self.buffer_size_combo.findData(preset["buffer_size"])
-            if index >= 0:
-                self.buffer_size_combo.setCurrentIndex(index)
-        if "pitch_voices" in preset:
-            self.pitch_voices_spin.setValue(preset["pitch_voices"])
+        The preset is checked first, and nothing is applied if it is not usable. Returns
+        a note for each value that was changed or left out. Raises PresetError.
+        """
+        values, notes = presets.check(preset, self.preset_fields())
+        controls = self.preset_controls()
+        for name, value in values.items():
+            control = controls[name]
+            if isinstance(control, QCheckBox):
+                control.setChecked(value)
+            elif isinstance(control, QComboBox):
+                control.setCurrentIndex(control.findData(value))
+            else:
+                control.setValue(value)
+        return notes
 
     def on_save_preset(self):
         """Save current settings to a JSON file."""
         path, _ = QFileDialog.getSaveFileName(
             self, "Save Preset", "", "JSON Files (*.json)"
         )
-        if path:
-            with open(path, "w") as f:
-                json.dump(self.get_preset(), f, indent=2)
-            self.status_label.setText("Status: Preset saved")
+        if not path:
+            return
+        try:
+            presets.save(path, self.get_preset())
+        except presets.PresetError as e:
+            self.status_label.setText(f"Status: Could not save preset: {e}")
+            return
+        self.status_label.setText("Status: Preset saved")
 
     def on_load_preset(self):
         """Load settings from a JSON file."""
         path, _ = QFileDialog.getOpenFileName(
             self, "Load Preset", "", "JSON Files (*.json)"
         )
-        if path:
-            try:
-                with open(path, "r") as f:
-                    preset = json.load(f)
-                self.apply_preset(preset)
-                self.status_label.setText("Status: Preset loaded")
-            except (json.JSONDecodeError, OSError):
-                self.status_label.setText("Status: Failed to load preset")
+        if not path:
+            return
+        stream_settings = self.stream_settings()
+        try:
+            notes = self.apply_preset(presets.load(path))
+        except presets.PresetError as e:
+            self.status_label.setText(f"Status: Could not load preset: {e}")
+            return
+
+        if self.audio_processor.running and self.stream_settings() != stream_settings:
+            notes.append("buffer size and pitch voices take effect at the next start")
+        status = "Status: Preset loaded"
+        if notes:
+            status += f" ({'; '.join(notes)})"
+        self.status_label.setText(status)
+        self.status_label.setToolTip(status)
 
     def update_level_meter(self, level):
         """Update the input level meter."""
@@ -756,6 +758,7 @@ class MainWindow(QMainWindow):
 
         self.audio_processor.set_input_device(input_device)
         self.audio_processor.set_output_device(output_device)
+        self.apply_stream_settings()
         try:
             self.audio_processor.start()
         except AudioStartError as e:
@@ -780,6 +783,7 @@ class MainWindow(QMainWindow):
         self.output_combo.setEnabled(True)
         self.buffer_size_combo.setEnabled(True)
         self.pitch_voices_spin.setEnabled(True)
+        self.apply_stream_settings()
         self.status_label.setText("Status: Stopped")
         self.level_bar.setValue(0)
 
