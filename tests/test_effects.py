@@ -1,0 +1,416 @@
+"""Behaviour of the effects chain, measured on synthetic signals."""
+
+import numpy as np
+import pytest
+
+from tests.helpers import (
+    SAMPLE_RATE,
+    db,
+    distortion_percent,
+    dominant_frequency,
+    from_pcm,
+    level_change_db,
+    make_processor,
+    process,
+    process_pcm,
+    rms,
+    sine,
+    tail,
+    to_pcm,
+    voice_like,
+)
+
+# One int16 step, in float units. Conversions may round either way.
+LSB = 1.0 / 32768.0
+
+EVERYTHING = {
+    "gain_db": 3.0,
+    "bass_db": 6.0,
+    "treble_db": -4.0,
+    "pitch_semitones": 4.0,
+    "formant_semitones": -2.0,
+    "formant_preserve": True,
+    "delay_ms": 50.0,
+    "high_pass_enabled": True,
+    "high_pass_hz": 120.0,
+    "low_pass_enabled": True,
+    "low_pass_hz": 9000.0,
+    "expander_enabled": True,
+    "expander_threshold_percent": 2.0,
+    "expander_ratio": 3.0,
+    "compressor_enabled": True,
+    "compressor_threshold_db": -20.0,
+    "compressor_makeup_db": 4.0,
+    "deesser_enabled": True,
+    "deesser_threshold_db": -28.0,
+}
+
+
+def change_db(settings: dict, freq: float, amplitude: float) -> float:
+    """Steady-state level change caused by `settings` on a sine, relative to a neutral chain."""
+    x = sine(freq, amplitude)
+    reference = process(make_processor(), x)
+    return level_change_db(process(make_processor(**settings), x), reference)
+
+
+# --- neutral chain and bypass --------------------------------------------------
+
+
+def test_bypass_returns_the_input_bytes_untouched():
+    p = make_processor(**EVERYTHING)
+    p.set_effects_enabled(False)
+    pcm = to_pcm(voice_like(0.2))
+    assert np.array_equal(process_pcm(p, pcm), pcm[: len(pcm) // 1024 * 1024])
+
+
+def test_bypass_clears_filter_state_so_reenabling_starts_clean():
+    p = make_processor(high_pass_enabled=True, high_pass_hz=200.0, bass_db=6.0)
+    process(p, voice_like(0.1))
+    assert p.effects.filter_states
+
+    p.set_effects_enabled(False)
+    process(p, voice_like(0.1))
+    assert p.effects.filter_states == {}
+
+
+def test_neutral_chain_only_soft_clips():
+    x = sine(300.0, 0.5)
+    out = process(make_processor(), x)
+    expected = np.tanh(from_pcm(to_pcm(x)))[: len(out)]
+    assert np.max(np.abs(out - expected)) <= 2 * LSB
+
+
+def test_silence_in_gives_silence_out():
+    out = process_pcm(make_processor(**EVERYTHING), np.zeros(SAMPLE_RATE // 2, dtype=np.int16))
+    assert not out.any()
+
+
+def test_output_never_exceeds_full_scale():
+    out = process(make_processor(gain_db=58.0, bass_db=20.0), voice_like(0.5))
+    assert np.max(np.abs(out)) <= 1.0
+
+
+# --- gain ----------------------------------------------------------------------
+
+
+def test_gain_is_applied_before_the_soft_clipper():
+    out = process(make_processor(gain_db=20 * np.log10(2.0)), sine(300.0, 0.1))
+    assert np.max(np.abs(tail(out))) == pytest.approx(np.tanh(0.2), abs=3 * LSB)
+
+
+def test_gain_change_is_smoothed_rather_than_stepped():
+    p = make_processor()
+    x = sine(300.0, 0.1, seconds=0.5)
+    process(p, x)
+    p.effects.set_gain(12.0)
+    out = process(p, x)
+    settled = np.tanh(0.1 * 10 ** (12 / 20))
+    # One millisecond after the change the level has only started to move.
+    assert np.max(np.abs(out[:48])) < 0.5 * settled
+    assert np.max(np.abs(tail(out))) == pytest.approx(settled, abs=3 * LSB)
+
+
+# --- filters -------------------------------------------------------------------
+
+
+def test_high_pass_removes_lows_and_keeps_highs():
+    settings = {"high_pass_enabled": True, "high_pass_hz": 300.0}
+    # Second order: 12 dB per octave, and 50 Hz is about 2.6 octaves below the cutoff.
+    assert change_db(settings, 50.0, 0.05) == pytest.approx(-31.2, abs=1.0)
+    assert change_db(settings, 3000.0, 0.05) == pytest.approx(0.0, abs=0.1)
+
+
+def test_high_pass_at_its_minimum_frequency_is_skipped():
+    settings = {"high_pass_enabled": True, "high_pass_hz": 20.0}
+    x = voice_like(0.3)
+    assert np.array_equal(process(make_processor(**settings), x), process(make_processor(), x))
+
+
+def test_low_pass_removes_highs_and_keeps_lows():
+    settings = {"low_pass_enabled": True, "low_pass_hz": 1000.0}
+    assert change_db(settings, 8000.0, 0.05) == pytest.approx(-38.1, abs=1.0)
+    assert change_db(settings, 100.0, 0.05) == pytest.approx(0.0, abs=0.1)
+
+
+def test_disabled_filters_do_nothing_whatever_their_frequency():
+    x = voice_like(0.3)
+    out = process(make_processor(high_pass_hz=400.0, low_pass_hz=2000.0), x)
+    assert np.array_equal(out, process(make_processor(), x))
+
+
+@pytest.mark.parametrize("gain_db", [12.0, -12.0])
+def test_bass_shelf_changes_lows_only(gain_db):
+    assert change_db({"bass_db": gain_db}, 40.0, 0.02) == pytest.approx(gain_db, abs=0.5)
+    assert change_db({"bass_db": gain_db}, 5000.0, 0.02) == pytest.approx(0.0, abs=0.1)
+
+
+@pytest.mark.parametrize("gain_db", [12.0, -12.0])
+def test_treble_shelf_changes_highs_only(gain_db):
+    assert change_db({"treble_db": gain_db}, 12000.0, 0.02) == pytest.approx(gain_db, abs=0.8)
+    assert change_db({"treble_db": gain_db}, 100.0, 0.02) == pytest.approx(0.0, abs=0.1)
+
+
+def test_shelf_gains_of_half_a_db_or_less_are_skipped():
+    x = voice_like(0.3)
+    out = process(make_processor(bass_db=0.5, treble_db=-0.5), x)
+    assert np.array_equal(out, process(make_processor(), x))
+
+
+# --- delay ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("delay_ms", [10.0, 250.0])
+def test_delay_shifts_the_signal_by_the_requested_time(delay_ms):
+    x = sine(300.0, 0.2, seconds=0.75)
+    out = process(make_processor(delay_ms=delay_ms), x)
+    undelayed = process(make_processor(), x)
+    shift = int(delay_ms * SAMPLE_RATE / 1000)
+
+    assert not out[:shift].any()
+    assert np.max(np.abs(out[shift:] - undelayed[: len(out) - shift])) <= 2 * LSB
+
+
+# --- pitch ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("semitones", [12.0, 7.0, -5.0, -12.0])
+def test_pitch_shift_moves_a_tone_towards_the_target(semitones):
+    freq = 1000.0
+    p = make_processor(pitch_semitones=semitones)
+    out = process(p, sine(freq, 0.3, seconds=2.0))
+    target = freq * 2 ** (semitones / 12)
+
+    # The grain-based shifter can only place a pure tone on a grid whose spacing is the
+    # rate at which grains start, so allow half of that spacing.
+    grain_rate = SAMPLE_RATE / (p.effects.pitch_window_size / p.effects.pitch_num_voices)
+    assert dominant_frequency(tail(out)) == pytest.approx(target, abs=grain_rate / 2)
+
+
+def test_pitch_shifts_below_a_tenth_of_a_semitone_are_skipped():
+    x = voice_like(0.3)
+    out = process(make_processor(pitch_semitones=0.05), x)
+    assert np.array_equal(out, process(make_processor(), x))
+
+
+@pytest.mark.parametrize("voices", [1, 3, 8])
+def test_pitch_shift_works_with_any_voice_count(voices):
+    out = process(make_processor(pitch_semitones=5.0, pitch_voices=voices), voice_like(0.5))
+    assert np.all(np.isfinite(out))
+    assert tail(out).any()
+
+
+# --- dynamics ------------------------------------------------------------------
+
+
+def test_compressor_turns_down_loud_signals_only():
+    settings = {"compressor_enabled": True, "compressor_threshold_db": -20.0, "compressor_ratio": 4.0}
+    assert change_db(settings, 300.0, 0.5) == pytest.approx(-8.4, abs=1.0)
+    assert change_db(settings, 300.0, 0.01) == pytest.approx(0.0, abs=0.1)
+
+
+def test_compressor_with_a_ratio_of_one_changes_nothing():
+    settings = {"compressor_enabled": True, "compressor_threshold_db": -40.0, "compressor_ratio": 1.0}
+    assert change_db(settings, 300.0, 0.5) == pytest.approx(0.0, abs=0.01)
+
+
+def test_compressor_makeup_gain_raises_the_level():
+    settings = {"compressor_enabled": True, "compressor_threshold_db": -20.0, "compressor_makeup_db": 6.0}
+    assert change_db(settings, 300.0, 0.01) == pytest.approx(6.0, abs=0.1)
+
+
+EXPANDER = {"expander_enabled": True, "expander_threshold_percent": 5.0, "expander_ratio": 4.0}
+
+
+@pytest.mark.parametrize("freq", [80.0, 300.0, 3000.0])
+@pytest.mark.parametrize("amplitude", [0.5, 0.1, 0.06])
+def test_expander_leaves_signals_above_the_threshold_alone(freq, amplitude):
+    assert change_db(EXPANDER, freq, amplitude) == pytest.approx(0.0, abs=0.05)
+
+
+@pytest.mark.parametrize("freq", [80.0, 300.0, 3000.0])
+def test_expander_turns_quiet_signals_down_by_the_ratio(freq):
+    # Half the threshold is 6 dB below it. At 4:1 that becomes 24 dB below, so 18 dB are
+    # removed. The detector sags a little between peaks, which removes slightly more.
+    assert change_db(EXPANDER, freq, 0.025) == pytest.approx(-18.1, abs=2.0)
+
+
+def burst_gain_db(out: np.ndarray, x: np.ndarray, at_seconds: float, window: int = 480) -> float:
+    start = int(at_seconds * SAMPLE_RATE)
+    return db(rms(out[start : start + window]) / rms(x[start : start + window]))
+
+
+def speech_burst() -> np.ndarray:
+    """Hiss, then 0.4 s of tone starting at 0.3 s, then hiss again."""
+    rng = np.random.default_rng(0)
+    x = 0.002 * rng.standard_normal(int(1.3 * SAMPLE_RATE))
+    start = int(0.3 * SAMPLE_RATE)
+    x[start : start + int(0.4 * SAMPLE_RATE)] += sine(300.0, 0.3, seconds=0.4)
+    return x.astype(np.float32)
+
+
+def run_expander(x: np.ndarray, **settings: float) -> np.ndarray:
+    """The expander alone, without the soft clipper or the conversion to 16 bits."""
+    chain = make_processor(**{**EXPANDER, **settings}).effects
+    return np.concatenate([chain.apply_expander(x[i : i + 1000]) for i in range(0, len(x), 1000)])
+
+
+def test_expander_closes_fully_on_signals_far_below_the_threshold():
+    x = sine(300.0, 0.002).astype(np.float32)
+    assert level_change_db(run_expander(x), x) == pytest.approx(-80.0, abs=0.5)
+    # At 16 bits that is silence.
+    assert not tail(process_pcm(make_processor(**EXPANDER), to_pcm(x))).any()
+
+
+def test_expander_with_a_threshold_of_zero_changes_nothing():
+    settings = {**EXPANDER, "expander_threshold_percent": 0.0}
+    assert change_db(settings, 300.0, 0.002) == pytest.approx(0.0, abs=0.01)
+
+
+@pytest.mark.parametrize("amplitude", [0.1, 0.025])
+def test_expander_adds_little_distortion_to_a_low_note(amplitude):
+    # Above the threshold there is none. Below it the detector sags between the peaks of
+    # the waveform, which moves the gain a little within each cycle.
+    out = run_expander(sine(80.0, amplitude).astype(np.float32))
+    assert distortion_percent(out, 80.0) < (0.001 if amplitude > 0.05 else 1.0)
+
+
+def test_expander_opens_within_the_attack_time():
+    x = speech_burst()
+    out = run_expander(x, expander_attack_ms=5.0, expander_release_ms=100.0)
+
+    assert burst_gain_db(out, x, 0.2) < -40.0  # closed on the hiss before the tone
+    assert burst_gain_db(out, x, 0.3 + 0.005) > -12.0  # audible almost at once
+    assert burst_gain_db(out, x, 0.3 + 0.025) > -0.5  # fully open five attack times in
+    assert burst_gain_db(out, x, 0.5) == pytest.approx(0.0, abs=0.01)
+
+
+def test_expander_closes_gradually_over_the_release_time():
+    x = speech_burst()
+    out = run_expander(x, expander_attack_ms=5.0, expander_release_ms=100.0)
+
+    just_after = burst_gain_db(out, x, 0.7 + 0.020)
+    later = burst_gain_db(out, x, 0.7 + 0.200)
+    much_later = burst_gain_db(out, x, 0.7 + 0.500)
+    assert just_after > -3.0  # the tail of the word is kept
+    assert later < just_after - 6.0
+    assert much_later < -40.0
+
+
+def test_a_longer_release_keeps_the_gate_open_longer():
+    x = speech_burst()
+    fast = run_expander(x, expander_release_ms=20.0)
+    slow = run_expander(x, expander_release_ms=400.0)
+    assert burst_gain_db(slow, x, 0.7 + 0.200) > burst_gain_db(fast, x, 0.7 + 0.200) + 10.0
+
+
+def test_a_longer_attack_opens_the_gate_more_slowly():
+    x = speech_burst()
+    fast = run_expander(x, expander_attack_ms=1.0)
+    slow = run_expander(x, expander_attack_ms=50.0)
+    assert burst_gain_db(fast, x, 0.3 + 0.010, window=240) > burst_gain_db(slow, x, 0.3 + 0.010, window=240) + 6.0
+
+
+DEESSER = {"deesser_enabled": True, "deesser_threshold_db": -20.0, "deesser_reduction_db": 6.0}
+SIBILANCE_HZ = 6300.0
+
+
+def run_deesser(x: np.ndarray, **settings: float) -> np.ndarray:
+    """The de-esser alone, without the soft clipper or the conversion to 16 bits."""
+    chain = make_processor(**{**DEESSER, **settings}).effects
+    x = x.astype(np.float32)
+    return np.concatenate([chain.apply_deesser(x[i : i + 1000]) for i in range(0, len(x), 1000)])
+
+
+def component_change_db(out: np.ndarray, x: np.ndarray, freq: float) -> float:
+    """Change in one frequency component, measured on the settled half."""
+    a = tail(np.asarray(out, dtype=np.float64))
+    b = tail(np.asarray(x, dtype=np.float64))
+    k = round(freq * len(a) / SAMPLE_RATE)
+    return db(np.abs(np.fft.rfft(a))[k] / np.abs(np.fft.rfft(b))[k])
+
+
+def test_deesser_turns_down_loud_sibilance():
+    assert change_db(DEESSER, SIBILANCE_HZ, 0.3) == pytest.approx(-6.0, abs=0.3)
+
+
+def test_deesser_leaves_quiet_sibilance_alone():
+    assert change_db(DEESSER, SIBILANCE_HZ, 0.01) == pytest.approx(0.0, abs=0.01)
+
+
+def test_deesser_leaves_the_voice_alone_while_it_works_on_sibilance():
+    x = sine(200.0, 0.3) + sine(SIBILANCE_HZ, 0.3)
+    out = run_deesser(x)
+    assert component_change_db(out, x, 200.0) == pytest.approx(0.0, abs=0.01)
+    assert component_change_db(out, x, SIBILANCE_HZ) == pytest.approx(-6.0, abs=0.3)
+
+
+@pytest.mark.parametrize("freq", [100.0, 1000.0, 3000.0, 12000.0, 16000.0])
+def test_deesser_never_boosts_and_barely_touches_other_frequencies(freq):
+    x = sine(freq, 0.3) + sine(SIBILANCE_HZ, 0.3)
+    change = component_change_db(run_deesser(x, deesser_reduction_db=12.0), x, freq)
+    assert -1.5 < change <= 0.0
+
+
+@pytest.mark.parametrize(("level_db", "expected_db"), [(-19.0, -1.0), (-17.0, -3.0), (-15.0, -5.0), (-10.0, -6.0)])
+def test_deesser_reduction_grows_with_the_excess_up_to_the_limit(level_db, expected_db):
+    # The detector reads a touch under the true peak, so allow half a dB.
+    x = sine(SIBILANCE_HZ, 10 ** (level_db / 20))
+    assert component_change_db(run_deesser(x), x, SIBILANCE_HZ) == pytest.approx(expected_db, abs=0.5)
+
+
+def test_deesser_with_no_reduction_changes_nothing():
+    x = sine(200.0, 0.3) + sine(SIBILANCE_HZ, 0.3)
+    out = run_deesser(x, deesser_reduction_db=0.0)
+    assert np.max(np.abs(out - x.astype(np.float32))) < 1e-6
+
+
+def test_deesser_engages_gradually():
+    # Sibilance fading in over a steady voice. The voice must not move, and the
+    # sibilance must be turned down progressively, not in one step.
+    n = SAMPLE_RATE
+    ramp = np.linspace(0.0, 1.0, n)
+    x = sine(200.0, 0.3) + ramp * sine(SIBILANCE_HZ, 0.3)
+    out = run_deesser(x).astype(np.float64)
+
+    spectrum = np.fft.rfft(out)
+    freqs = np.fft.rfftfreq(n, 1 / SAMPLE_RATE)
+    voice = np.fft.irfft(np.where(freqs < 1000, spectrum, 0), n)
+    hiss = np.fft.irfft(np.where(freqs >= 1000, spectrum, 0), n)
+    frame = 240  # 5 ms
+    frames = range(5 * frame, n - 5 * frame, frame)
+
+    voice_db = np.array([db(np.sqrt(2) * rms(voice[i : i + frame]) / 0.3) for i in frames])
+    assert np.max(np.abs(voice_db)) < 0.01
+
+    hiss_level = np.array([np.sqrt(2) * rms(hiss[i : i + frame]) for i in frames])
+    hiss_in = np.array([0.3 * ramp[i + frame // 2] for i in frames])
+    gain_db = np.array([db(o / i) for o, i in zip(hiss_level, hiss_in, strict=True)])
+    assert gain_db[0] == pytest.approx(0.0, abs=0.05)
+    assert gain_db[-1] == pytest.approx(-6.0, abs=0.3)
+    assert np.max(np.abs(np.diff(gain_db))) < 0.5
+
+
+def test_deesser_is_skipped_when_the_band_does_not_fit_the_sample_rate():
+    chain = make_processor(sample_rate=12000, **DEESSER).effects
+    x = sine(3000.0, 0.5, sample_rate=12000).astype(np.float32)
+    assert np.array_equal(chain.apply_deesser(x), x)
+
+
+# --- whole chain ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("chunk", [128, 256, 4096])
+def test_output_does_not_depend_on_the_buffer_size(chunk):
+    pcm = to_pcm(voice_like(1.0))
+    reference = process_pcm(make_processor(**EVERYTHING), pcm, 1024)
+    out = process_pcm(make_processor(**EVERYTHING), pcm, chunk)
+    n = min(len(out), len(reference))
+    assert np.array_equal(out[:n], reference[:n])
+
+
+@pytest.mark.parametrize("sample_rate", [16000, 44100, 96000])
+def test_chain_runs_at_every_supported_sample_rate(sample_rate):
+    x = voice_like(0.5, sample_rate=sample_rate)
+    out = process(make_processor(sample_rate=sample_rate, **EVERYTHING), x)
+    assert np.all(np.isfinite(out))
+    assert tail(out).any()

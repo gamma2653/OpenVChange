@@ -4,21 +4,57 @@
 Build with:  poetry run pyinstaller openvchange.spec
 Output:      dist/OpenVChange-<version>.exe  (single-file build)
 
-The version is read from pyproject.toml so the output name always matches
-the package version.
+The version is read from pyproject.toml, so the name of the output and the
+details Windows shows for the file always match the package version.
 """
 
 import re
 import tomllib
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.win32.versioninfo import (
+    FixedFileInfo,
+    StringFileInfo,
+    StringStruct,
+    StringTable,
+    VarFileInfo,
+    VarStruct,
+    VSVersionInfo,
+)
 
 block_cipher = None
 
 APP_NAME = "OpenVChange"
+DESCRIPTION = "OpenVChange - virtual audio router and voice changer"
+ICON = "openvchange/assets/icon.ico"
 with open(Path(SPECPATH) / "pyproject.toml", "rb") as f:
     VERSION = tomllib.load(f)["tool"]["poetry"]["version"]
+
+# What Windows shows under Properties > Details. It wants the version as four numbers,
+# so anything after the third, such as a pre-release tag, is left out of those.
+_numbers = [int(n) for n in re.findall(r"\d+", VERSION.split("-")[0].split("+")[0])][:3]
+_numbers += [0] * (4 - len(_numbers))
+VERSION_INFO = VSVersionInfo(
+    ffi=FixedFileInfo(filevers=tuple(_numbers), prodvers=tuple(_numbers)),
+    kids=[
+        StringFileInfo(
+            [
+                StringTable(
+                    "040904B0",  # US English, Unicode
+                    [
+                        StringStruct("ProductName", APP_NAME),
+                        StringStruct("FileDescription", DESCRIPTION),
+                        StringStruct("FileVersion", VERSION),
+                        StringStruct("ProductVersion", VERSION),
+                        StringStruct("InternalName", APP_NAME),
+                        StringStruct("OriginalFilename", f"{APP_NAME}-{VERSION}.exe"),
+                    ],
+                )
+            ]
+        ),
+        VarFileInfo([VarStruct("Translation", [0x0409, 1200])]),
+    ],
+)
 
 # Qt modules the app never imports; excluding them keeps the bundle small.
 qt_excludes = [
@@ -76,12 +112,13 @@ a = Analysis(
     ["openvchange/__main__.py"],
     pathex=["."],
     binaries=[],
-    datas=[],
-    hiddenimports=collect_submodules("scipy.signal"),
+    # Unpacked next to the package, where openvchange/resources.py looks for them.
+    datas=[("openvchange/assets/*", "openvchange/assets")],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=qt_excludes + ["tkinter", "matplotlib", "IPython", "pytest"],
+    excludes=qt_excludes + ["tkinter", "matplotlib", "IPython", "pytest", "scipy"],
     noarchive=False,
 )
 
@@ -106,6 +143,8 @@ exe = EXE(
     a.datas,
     [],
     name=f"{APP_NAME}-{VERSION}",
+    icon=ICON,
+    version=VERSION_INFO,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
