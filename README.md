@@ -96,6 +96,7 @@ The result is a single self-contained `dist/OpenVChange-<version>.exe`, where th
 poetry install --with dev
 poetry run ruff check .   # lint
 poetry run pytest         # test
+poetry run python scripts/benchmark.py   # time the effects against the real-time budget
 ```
 
 The tests run without a display and never open a real audio device, so they are safe to run anywhere. Both commands run in CI on every pull request.

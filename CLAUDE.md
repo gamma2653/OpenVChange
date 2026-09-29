@@ -22,6 +22,9 @@ poetry run pyinstaller openvchange.spec
 poetry run ruff check .
 poetry run pytest
 
+# Time the effects chain against the real-time budget
+poetry run python scripts/benchmark.py
+
 # Record a user-facing change for the next release (needs Node 22.11+)
 npm run changeset
 ```
@@ -34,6 +37,7 @@ CI and release builds use Python 3.12. The locked NumPy (1.26) has no wheels for
 - `pyaudio.PyAudio` is replaced by `tests/fakes.py` for every test, so nothing opens a real audio device. Never open a real stream from a test: it would route the microphone to the speakers
 - Effects are tested by feeding synthetic signals through the engine and measuring the result (`tests/helpers.py`). Settings are passed in engine units (dB, Hz, ms, semitones)
 - Output must not depend on the buffer size; `test_output_does_not_depend_on_the_buffer_size` guards that
+- `tests/reference_dsp.py` holds the original sample-by-sample implementations. Optimised code in `dsp.py` must match them exactly (`tests/test_matches_reference.py`), so an optimisation never changes the sound
 
 ## Releases
 
@@ -91,7 +95,8 @@ Signal flow (in order):
 ## Key Implementation Details
 
 - The Main tab's "Enable Effects" checkbox sets `AudioProcessor.effects_enabled`; when off, `apply_filters()` returns the input bytes untouched (after emitting the level meter signal) and calls `reset_effect_states()` so re-enabling starts clean
-- Filter coefficients are recalculated when parameters change via `_update_filter_coefficients()`
+- Filter coefficients are cached by `EffectsChain.coefficients()` and redesigned only when the settings behind them, or the sample rate, change
+- The audio callback has one buffer's worth of time per buffer (21 ms at 1024 samples and 48 kHz). Avoid per-sample Python loops over NumPy arrays in `dsp.py`; they are what made the engine miss that budget
 - Pitch shift uses circular buffer with 4 overlapping read pointers and crossfade to reduce artifacts
 - Level meter emits Qt signals for thread-safe GUI updates
 - PyAudio callback runs in separate thread; use Qt signals to communicate with GUI

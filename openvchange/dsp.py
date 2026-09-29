@@ -25,6 +25,9 @@ class EffectsChain:
         # Filter states (preserved between chunks)
         self.filter_states = {}
 
+        # Filter coefficients, redesigned only when the settings behind them change
+        self._coefficients = {}
+
         # Filter parameters
         self.low_cut = 80
         self.high_cut = 16000
@@ -239,7 +242,7 @@ class EffectsChain:
         if low_freq >= high_freq:
             return data
 
-        b, a = signal.butter(2, [low_freq, high_freq], btype='band')  # type: ignore[attr-defined]
+        b, a = self.coefficients("deesser_sidechain", "bandpass", low_freq, high_freq)
         sidechain = self.apply_filter_with_state(b, a, data.copy(), "deesser_sidechain")
 
         # Fast envelope follower for sidechain
@@ -374,6 +377,62 @@ class EffectsChain:
 
         return output
 
+    def apply_delay(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.float32]:
+        """Delay the signal through a circular buffer."""
+        size = self.delay_buffer_size
+        delay_samples = min(int(self.delay_ms * self.sample_rate / 1000), size - 1)
+        buf = self.delay_buffer
+        write_pos = self.delay_write_pos
+        samples = data.astype(np.float32)
+        output = np.empty(len(samples), dtype=np.float32)
+
+        # Work in pieces no longer than the buffer, so a piece never overwrites itself.
+        for start in range(0, len(samples), size):
+            piece = samples[start : start + size]
+            n = len(piece)
+            out = output[start : start + n]
+
+            # The first `delay_samples` outputs are older than this piece, so read them
+            # before the piece is written. The rest come from the piece itself.
+            from_buffer = min(n, delay_samples)
+            out[:from_buffer] = buf[(write_pos - delay_samples + np.arange(from_buffer)) % size]
+            out[from_buffer:] = piece[: n - from_buffer]
+
+            buf[(write_pos + np.arange(n)) % size] = piece
+            write_pos = (write_pos + n) % size
+
+        self.delay_write_pos = write_pos
+        return output
+
+    def apply_gain(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
+        """Apply the output gain, gliding towards a new setting instead of jumping."""
+        target = self.gain_target
+        gain = self.gain_smoothed
+        step = 1 - self.param_smooth_coeff
+        n = len(data)
+
+        # Follow the glide sample by sample until it stops moving, which it has
+        # already done unless the gain was changed a moment ago.
+        gains = None
+        for i in range(n):
+            moved = gain + (target - gain) * step
+            if moved == gain:
+                break
+            if gains is None:
+                gains = np.empty(n, dtype=np.float64)
+            gain = moved
+            gains[i] = gain
+        else:
+            i = n
+        self.gain_smoothed = gain
+
+        # Multiply in double precision and round once, whatever the input type.
+        samples = data.astype(np.float64)
+        if gains is None:
+            return (samples * gain).astype(data.dtype)
+        gains[i:] = gain
+        return (samples * gains).astype(data.dtype)
+
     def make_shelf_filter(self, freq: float, gain_db: float, filter_type: str = "low") -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
         """Create a shelf filter using biquad coefficients.
 
@@ -405,6 +464,29 @@ class EffectsChain:
         a = np.array([1, a1/a0, a2/a0])
         return b, a
 
+    def coefficients(self, name: str, kind: str, *params: float) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+        """Coefficients for the filter called `name`, designed again only when `params` change.
+
+        kind: 'highpass', 'lowpass' or 'bandpass' (Butterworth, frequencies as a fraction
+        of Nyquist), or 'lowshelf' or 'highshelf' (frequency in Hz, gain in dB).
+        """
+        key = (kind, self.sample_rate, *params)
+        cached = self._coefficients.get(name)
+        if cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+
+        if kind == "lowshelf":
+            b, a = self.make_shelf_filter(params[0], params[1], "low")
+        elif kind == "highshelf":
+            b, a = self.make_shelf_filter(params[0], params[1], "high")
+        elif kind == "bandpass":
+            b, a = signal.butter(2, list(params), btype="band")  # type: ignore[attr-defined]
+        else:
+            b, a = signal.butter(2, params[0], btype=kind)  # type: ignore[attr-defined]
+
+        self._coefficients[name] = (key, b, a)
+        return b, a
+
     def apply_filter_with_state(self, b: npt.NDArray[np.floating], a: npt.NDArray[np.floating], data: npt.NDArray[np.float32], filter_key: str) -> npt.NDArray[np.float32]:
         """Apply filter while preserving state between chunks."""
         if filter_key not in self.filter_states:
@@ -422,7 +504,7 @@ class EffectsChain:
             nyquist = self.sample_rate / 2
             low = self.low_cut / nyquist
             if low < 1.0:
-                b, a = signal.butter(2, low, btype="high")  # type: ignore[attr-defined]
+                b, a = self.coefficients("highpass", "highpass", low)
                 data = self.apply_filter_with_state(b, a, data, "highpass")
         elif "highpass" in self.filter_states:
             del self.filter_states["highpass"]
@@ -432,21 +514,21 @@ class EffectsChain:
             nyquist = self.sample_rate / 2
             high = self.high_cut / nyquist
             if high < 1.0:
-                b, a = signal.butter(2, high, btype="low")  # type: ignore[attr-defined]
+                b, a = self.coefficients("lowpass", "lowpass", high)
                 data = self.apply_filter_with_state(b, a, data, "lowpass")
         elif "lowpass" in self.filter_states:
             del self.filter_states["lowpass"]
 
         # Bass shelf filter
         if abs(self.bass_gain) > 0.5:
-            b, a = self.make_shelf_filter(self.bass_freq, self.bass_gain, "low")
+            b, a = self.coefficients("bass", "lowshelf", self.bass_freq, self.bass_gain)
             data = self.apply_filter_with_state(b, a, data, "bass")
         elif "bass" in self.filter_states:
             del self.filter_states["bass"]
 
         # Treble shelf filter
         if abs(self.treble_gain) > 0.5:
-            b, a = self.make_shelf_filter(self.treble_freq, self.treble_gain, "high")
+            b, a = self.coefficients("treble", "highshelf", self.treble_freq, self.treble_gain)
             data = self.apply_filter_with_state(b, a, data, "treble")
         elif "treble" in self.filter_states:
             del self.filter_states["treble"]
@@ -463,31 +545,10 @@ class EffectsChain:
 
         # Apply delay
         if self.delay_ms > 0:
-            delay_samples = int(self.delay_ms * self.sample_rate / 1000)
-            delay_samples = min(delay_samples, self.delay_buffer_size - 1)
-            buf = self.delay_buffer
-            buf_size = self.delay_buffer_size
-            wp = self.delay_write_pos
-            n = len(data)
+            data = self.apply_delay(data)
 
-            # Write current chunk into circular buffer and read delayed samples
-            output = np.empty(n, dtype=np.float32)
-            for i in range(n):
-                buf[wp] = data[i]
-                read_pos = (wp - delay_samples) % buf_size
-                output[i] = buf[read_pos]
-                wp = (wp + 1) % buf_size
-
-            self.delay_write_pos = wp
-            data = output
-
-        # Apply gain (with per-sample smoothing to prevent clicks)
-        smooth_coeff = self.param_smooth_coeff
-        output = np.empty_like(data)
-        for i in range(len(data)):
-            self.gain_smoothed += (self.gain_target - self.gain_smoothed) * (1 - smooth_coeff)
-            output[i] = data[i] * self.gain_smoothed
-        data = output
+        # Apply gain (smoothed to prevent clicks)
+        data = self.apply_gain(data)
 
         # Soft clipping using tanh for smoother limiting
         return np.tanh(data)
