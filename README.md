@@ -88,6 +88,8 @@ poetry install --with dev
 poetry run pyinstaller openvchange.spec
 ```
 
+The executable is not code-signed, so Windows SmartScreen warns the first time it is run. Signing needs a certificate, which this project does not have.
+
 The result is a single self-contained `dist/OpenVChange-<version>.exe`, where the version comes from `pyproject.toml`. The spec file trims unused Qt modules, so the build is roughly 34 MB. Because it is a one-file build, the exe unpacks itself to a temp directory on launch, so the first window takes a few seconds to appear.
 
 ## Development

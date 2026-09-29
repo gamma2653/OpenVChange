@@ -4,7 +4,7 @@ import logging
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from openvchange import presets, settings
+from openvchange import __version__, presets, resources, settings
 from openvchange.audio import AudioProcessor, AudioStartError
 from openvchange.builtin_presets import BUILT_IN, NEUTRAL, SESSION_DEFAULTS
 from openvchange.hotkey import GlobalHotkey, HotkeyError
@@ -469,6 +469,11 @@ class MainWindow(QMainWindow):
         self.hotkey_edit.setEnabled(self.hotkey.supported)
 
         advanced_layout.addStretch()
+
+        self.version_label = QLabel(f"OpenVChange {__version__}")
+        self.version_label.setEnabled(False)
+        self.version_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        advanced_layout.addWidget(self.version_label)
 
         self.tab_widget.addTab(advanced_tab, "Advanced Settings")
 
@@ -986,10 +991,36 @@ def describe_shortcut(sequence):
     return sequence.toString(QKeySequence.SequenceFormat.NativeText) or "An empty shortcut"
 
 
+def application_icon():
+    """The icon for the windows and the taskbar."""
+    icon = QIcon()
+    for path in (resources.ICON_ICO, resources.ICON_PNG):
+        if path.exists():
+            icon.addFile(str(path))
+    return icon
+
+
+def identify_to_windows():
+    """Tell Windows that this is an application of its own.
+
+    Run from source, the process is python.exe, and the taskbar would otherwise show the
+    Python icon and group the window with other Python programs.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OpenVChange")
+
+
 def main():
     """Application entry point."""
+    identify_to_windows()
     app = QApplication(sys.argv)
+    app.setApplicationName("OpenVChange")
+    app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
+    app.setWindowIcon(application_icon())
 
     window = MainWindow()
     window.show()

@@ -25,6 +25,9 @@ poetry run pytest
 # Time the effects chain against the real-time budget
 poetry run python scripts/benchmark.py
 
+# Draw the icon again after changing scripts/make_icon.py
+poetry run python scripts/make_icon.py
+
 # Record a user-facing change for the next release (needs Node 22.11+)
 npm run changeset
 ```
@@ -44,7 +47,8 @@ CI and release builds use Python 3.12. The locked NumPy (1.26) has no wheels for
 Releases are driven by Changesets. `package.json` is the version source of truth and exists only for that purpose; the app has no JavaScript.
 
 - User-facing changes should include a changeset file in `.changeset/` (frontmatter `"openvchange": patch|minor|major`, then a one-line summary)
-- Never edit the version in `pyproject.toml` by hand; `scripts/sync-version.mjs` copies it from `package.json`, and CI fails if they differ
+- Never edit the version in `pyproject.toml` or `openvchange/__init__.py` by hand; `scripts/sync-version.mjs` copies it from `package.json`, and CI fails if they differ
+- The executable is not code-signed. That needs a certificate, which the project does not have
 - `.github/workflows/release.yml` opens a "Version OpenVChange" pull request while changesets are pending, then builds the exe and publishes a GitHub release tagged `v<version>` once that pull request is merged
 - `changeset init` and `changeset add` are interactive; write changeset files directly when working non-interactively
 
@@ -103,6 +107,11 @@ The codebase is split by concern. The window, the audio stream, and the signal p
 - `GlobalHotkey` registers one shortcut with `RegisterHotKey` for the GUI thread and hears about presses through a native event filter. No window handle is involved
 - No shortcut is set by default: Ctrl+Alt plus a letter types a character on many keyboard layouts, and any default could clash with another application
 - Tests replace the backend with a fake (`tests/conftest.py`). Presses are tested by posting the real `WM_HOTKEY` message to the thread. Never simulate key presses in a test: they would go to whatever has the focus on the machine running the tests
+
+**`openvchange/resources.py`** and **`openvchange/assets/`** - Files that ship with the app
+- The icon is drawn by `scripts/make_icon.py`; the files in `assets/` are its output and are committed. A test fails if they no longer match the drawing
+- Look files up through `resources.py`, never relative to `__main__.py`: in the executable the entry script is not inside the package, so its folder is a different one
+- Anything added to `assets/` is packed into the executable by the spec
 
 **`openvchange/settings.py`** - What is remembered between launches
 - Devices (by identity), the device filter, and the effect settings, as `settings.json` in the per-user configuration folder (`%APPDATA%\OpenVChange` on Windows)

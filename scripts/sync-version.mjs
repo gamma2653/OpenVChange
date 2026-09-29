@@ -2,7 +2,8 @@
 //
 // Changesets only knows how to bump package.json, so after `changeset version`
 // this script copies the new version into pyproject.toml (which the PyInstaller
-// spec reads) and into the root entries of package-lock.json.
+// spec reads), into openvchange/__init__.py (which the app shows), and into the
+// root entries of package-lock.json.
 //
 //   node scripts/sync-version.mjs          write the version
 //   node scripts/sync-version.mjs --check  exit 1 if anything is out of step
@@ -49,6 +50,22 @@ const stale = [];
   if (!found) {
     console.error("sync-version: no version field found in pyproject.toml");
     process.exit(1);
+  }
+}
+
+// --- openvchange/__init__.py ------------------------------------------------
+// The version the app shows about itself.
+{
+  const name = "openvchange/__init__.py";
+  const text = read(name);
+  const line = text.match(/^(__version__\s*=\s*)(["'])(.*?)\2/m);
+  if (!line) {
+    console.error(`sync-version: no __version__ found in ${name}`);
+    process.exit(1);
+  }
+  if (line[3] !== version) {
+    stale.push(`${name} has ${line[3]}`);
+    if (!check) write(name, text.replace(line[0], `${line[1]}${line[2]}${version}${line[2]}`));
   }
 }
 
