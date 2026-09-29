@@ -47,6 +47,12 @@ def time_coefficient(time_ms: float, sample_rate: int) -> float:
 # peaks of a low note, short enough that the gate still starts closing promptly.
 EXPANDER_DETECTOR_RELEASE_MS = 50.0
 
+# The de-esser works on the band from 5 to 8 kHz, where "s" and "sh" sounds sit.
+DEESSER_CENTER_HZ = math.sqrt(5000.0 * 8000.0)
+DEESSER_Q = DEESSER_CENTER_HZ / (8000.0 - 5000.0)
+DEESSER_ATTACK_MS = 1.0
+DEESSER_RELEASE_MS = 50.0
+
 # Gain of a fully closed gate. Low enough to be inaudible, and finite so that the
 # gate takes the same time to open however long it has been closed.
 EXPANDER_FLOOR_DB = -80.0
@@ -273,35 +279,37 @@ class EffectsChain:
         return (samples * 10 ** (gain_db / 20)).astype(data.dtype)
 
     def apply_deesser(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
-        """Apply de-esser using bandpass sidechain detection."""
+        """Turn down the sibilant band, and only that band, while it is too loud.
+
+        The band is limited to the threshold: it is turned down by as much as it
+        exceeds the threshold, up to the reduction setting. Everything outside the
+        band passes unchanged.
+        """
         if not self.deesser_enabled:
             return data
+        if DEESSER_CENTER_HZ >= 0.45 * self.sample_rate:
+            return data  # the band does not fit below half the sample rate
 
-        # Create bandpass filter for sibilance detection (5-8 kHz)
-        nyquist = self.sample_rate / 2
-        low_freq = min(5000 / nyquist, 0.99)
-        high_freq = min(8000 / nyquist, 0.99)
+        b, a = self.coefficients("deesser_band", "bandpass", DEESSER_CENTER_HZ, DEESSER_Q)
+        samples = data.astype(np.float64)
+        band = self.apply_filter_with_state(b, a, samples, "deesser_band")
 
-        if low_freq >= high_freq:
-            return data
-
-        b, a = self.coefficients("deesser_sidechain", "bandpass", low_freq, high_freq)
-        sidechain = self.apply_filter_with_state(b, a, data.copy(), "deesser_sidechain")
-
-        # Fast envelope follower for sidechain
-        attack_coeff = time_coefficient(1.0, self.sample_rate)
-        release_coeff = time_coefficient(50.0, self.sample_rate)
-
-        threshold_linear = 10 ** (self.deesser_threshold_db / 20)
-        reduction_linear = 10 ** (-self.deesser_reduction_db / 20)
-
+        # How loud the band is
         envelope, self.deesser_envelope = follow(
-            np.abs(sidechain).tolist(), self.deesser_envelope, rising=attack_coeff, falling=release_coeff
+            np.abs(band).tolist(),
+            self.deesser_envelope,
+            rising=time_coefficient(DEESSER_ATTACK_MS, self.sample_rate),
+            falling=time_coefficient(DEESSER_RELEASE_MS, self.sample_rate),
         )
 
-        # Apply gain reduction when sidechain exceeds threshold
-        reduced = (data.astype(np.float64) * reduction_linear).astype(data.dtype)
-        return np.where(envelope > threshold_linear, reduced, data)
+        # The reduction follows the envelope, so it moves as smoothly as the envelope.
+        envelope_db = 20 * np.log10(np.maximum(envelope, 1e-10))
+        reduction_db = np.clip(envelope_db - self.deesser_threshold_db, 0.0, self.deesser_reduction_db)
+        band_gain = 10 ** (-reduction_db / 20)
+
+        # Take away the share of the band that has to go. The filter never turns the
+        # phase by more than a quarter cycle, so this can only reduce, never boost.
+        return (samples - (1 - band_gain) * band).astype(data.dtype)
 
     def apply_compressor(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Apply dynamic range compression with attack/release."""
@@ -545,11 +553,24 @@ class EffectsChain:
         a = np.array([1, a1/a0, a2/a0])
         return b, a
 
+    def make_bandpass_filter(self, freq: float, q: float) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
+        """Second-order band-pass with unity gain at its centre frequency.
+
+        From the Audio EQ Cookbook by Robert Bristow-Johnson.
+        """
+        w0 = 2 * np.pi * freq / self.sample_rate
+        alpha = np.sin(w0) / (2 * q)
+        a0 = 1 + alpha
+        b = np.array([alpha / a0, 0.0, -alpha / a0])
+        a = np.array([1.0, -2 * np.cos(w0) / a0, (1 - alpha) / a0])
+        return b, a
+
     def coefficients(self, name: str, kind: str, *params: float) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
         """Coefficients for the filter called `name`, designed again only when `params` change.
 
-        kind: 'highpass', 'lowpass' or 'bandpass' (Butterworth, frequencies as a fraction
-        of Nyquist), or 'lowshelf' or 'highshelf' (frequency in Hz, gain in dB).
+        kind: 'highpass' or 'lowpass' (Butterworth, frequency as a fraction of Nyquist),
+        'lowshelf' or 'highshelf' (frequency in Hz, gain in dB), or 'bandpass' (centre
+        frequency in Hz, Q).
         """
         key = (kind, self.sample_rate, *params)
         cached = self._coefficients.get(name)
@@ -561,7 +582,7 @@ class EffectsChain:
         elif kind == "highshelf":
             b, a = self.make_shelf_filter(params[0], params[1], "high")
         elif kind == "bandpass":
-            b, a = signal.butter(2, list(params), btype="band")  # type: ignore[attr-defined]
+            b, a = self.make_bandpass_filter(params[0], params[1])
         else:
             b, a = signal.butter(2, params[0], btype=kind)  # type: ignore[attr-defined]
 

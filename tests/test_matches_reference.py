@@ -248,28 +248,6 @@ def test_compressor_matches_reference(dtype, sizes, threshold_db, ratio, attack_
         assert chain.compressor_envelope_db == pytest.approx(envelope_db, rel=1e-7)
 
 
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-@pytest.mark.parametrize("sizes", [[1024], [128], [300, 1024, 17]])
-@pytest.mark.parametrize(("threshold_db", "reduction_db"), [(-20.0, 6.0), (-40.0, 12.0), (-2.0, 12.0), (-30.0, 0.0)])
-def test_deesser_matches_reference(dtype, sizes, threshold_db, reduction_db):
-    chain = EffectsChain(SAMPLE_RATE)
-    chain.set_deesser_enabled(True)
-    chain.set_deesser_threshold(threshold_db)
-    chain.set_deesser_reduction(reduction_db)
-    chain.reset()
-    sidechain_filter = EffectsChain(SAMPLE_RATE)
-    b, a = sidechain_filter.coefficients("deesser_sidechain", "bandpass", 5000 / 24000, 8000 / 24000)
-    envelope = 0.0
-
-    for block in speech_like(40_000, sizes, dtype):
-        sidechain = sidechain_filter.apply_filter_with_state(b, a, block.copy(), "deesser_sidechain")
-        expected, envelope = reference_dsp.deesser(block, sidechain, envelope, SAMPLE_RATE, threshold_db, reduction_db)
-        out = chain.apply_deesser(block)
-        assert out.dtype == expected.dtype
-        assert np.array_equal(out, expected)
-        assert chain.deesser_envelope == envelope
-
-
 def test_an_empty_buffer_is_passed_through():
     chain = EffectsChain(SAMPLE_RATE)
     chain.set_expander_enabled(True)

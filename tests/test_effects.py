@@ -308,15 +308,90 @@ def test_a_longer_attack_opens_the_gate_more_slowly():
     assert burst_gain_db(fast, x, 0.3 + 0.010, window=240) > burst_gain_db(slow, x, 0.3 + 0.010, window=240) + 6.0
 
 
-def test_deesser_turns_down_sibilance_only():
-    settings = {"deesser_enabled": True, "deesser_threshold_db": -20.0, "deesser_reduction_db": 6.0}
-    assert change_db(settings, 6500.0, 0.3) == pytest.approx(-6.0, abs=0.5)
-    assert change_db(settings, 200.0, 0.3) == pytest.approx(0.0, abs=0.1)
+DEESSER = {"deesser_enabled": True, "deesser_threshold_db": -20.0, "deesser_reduction_db": 6.0}
+SIBILANCE_HZ = 6300.0
+
+
+def run_deesser(x: np.ndarray, **settings: float) -> np.ndarray:
+    """The de-esser alone, without the soft clipper or the conversion to 16 bits."""
+    chain = make_processor(**{**DEESSER, **settings}).effects
+    x = x.astype(np.float32)
+    return np.concatenate([chain.apply_deesser(x[i : i + 1000]) for i in range(0, len(x), 1000)])
+
+
+def component_change_db(out: np.ndarray, x: np.ndarray, freq: float) -> float:
+    """Change in one frequency component, measured on the settled half."""
+    a = tail(np.asarray(out, dtype=np.float64))
+    b = tail(np.asarray(x, dtype=np.float64))
+    k = round(freq * len(a) / SAMPLE_RATE)
+    return db(np.abs(np.fft.rfft(a))[k] / np.abs(np.fft.rfft(b))[k])
+
+
+def test_deesser_turns_down_loud_sibilance():
+    assert change_db(DEESSER, SIBILANCE_HZ, 0.3) == pytest.approx(-6.0, abs=0.3)
 
 
 def test_deesser_leaves_quiet_sibilance_alone():
-    settings = {"deesser_enabled": True, "deesser_threshold_db": -20.0, "deesser_reduction_db": 6.0}
-    assert change_db(settings, 6500.0, 0.01) == pytest.approx(0.0, abs=0.1)
+    assert change_db(DEESSER, SIBILANCE_HZ, 0.01) == pytest.approx(0.0, abs=0.01)
+
+
+def test_deesser_leaves_the_voice_alone_while_it_works_on_sibilance():
+    x = sine(200.0, 0.3) + sine(SIBILANCE_HZ, 0.3)
+    out = run_deesser(x)
+    assert component_change_db(out, x, 200.0) == pytest.approx(0.0, abs=0.01)
+    assert component_change_db(out, x, SIBILANCE_HZ) == pytest.approx(-6.0, abs=0.3)
+
+
+@pytest.mark.parametrize("freq", [100.0, 1000.0, 3000.0, 12000.0, 16000.0])
+def test_deesser_never_boosts_and_barely_touches_other_frequencies(freq):
+    x = sine(freq, 0.3) + sine(SIBILANCE_HZ, 0.3)
+    change = component_change_db(run_deesser(x, deesser_reduction_db=12.0), x, freq)
+    assert -1.5 < change <= 0.0
+
+
+@pytest.mark.parametrize(("level_db", "expected_db"), [(-19.0, -1.0), (-17.0, -3.0), (-15.0, -5.0), (-10.0, -6.0)])
+def test_deesser_reduction_grows_with_the_excess_up_to_the_limit(level_db, expected_db):
+    # The detector reads a touch under the true peak, so allow half a dB.
+    x = sine(SIBILANCE_HZ, 10 ** (level_db / 20))
+    assert component_change_db(run_deesser(x), x, SIBILANCE_HZ) == pytest.approx(expected_db, abs=0.5)
+
+
+def test_deesser_with_no_reduction_changes_nothing():
+    x = sine(200.0, 0.3) + sine(SIBILANCE_HZ, 0.3)
+    out = run_deesser(x, deesser_reduction_db=0.0)
+    assert np.max(np.abs(out - x.astype(np.float32))) < 1e-6
+
+
+def test_deesser_engages_gradually():
+    # Sibilance fading in over a steady voice. The voice must not move, and the
+    # sibilance must be turned down progressively, not in one step.
+    n = SAMPLE_RATE
+    ramp = np.linspace(0.0, 1.0, n)
+    x = sine(200.0, 0.3) + ramp * sine(SIBILANCE_HZ, 0.3)
+    out = run_deesser(x).astype(np.float64)
+
+    spectrum = np.fft.rfft(out)
+    freqs = np.fft.rfftfreq(n, 1 / SAMPLE_RATE)
+    voice = np.fft.irfft(np.where(freqs < 1000, spectrum, 0), n)
+    hiss = np.fft.irfft(np.where(freqs >= 1000, spectrum, 0), n)
+    frame = 240  # 5 ms
+    frames = range(5 * frame, n - 5 * frame, frame)
+
+    voice_db = np.array([db(np.sqrt(2) * rms(voice[i : i + frame]) / 0.3) for i in frames])
+    assert np.max(np.abs(voice_db)) < 0.01
+
+    hiss_level = np.array([np.sqrt(2) * rms(hiss[i : i + frame]) for i in frames])
+    hiss_in = np.array([0.3 * ramp[i + frame // 2] for i in frames])
+    gain_db = np.array([db(o / i) for o, i in zip(hiss_level, hiss_in, strict=True)])
+    assert gain_db[0] == pytest.approx(0.0, abs=0.05)
+    assert gain_db[-1] == pytest.approx(-6.0, abs=0.3)
+    assert np.max(np.abs(np.diff(gain_db))) < 0.5
+
+
+def test_deesser_is_skipped_when_the_band_does_not_fit_the_sample_rate():
+    chain = make_processor(sample_rate=12000, **DEESSER).effects
+    x = sine(3000.0, 0.5, sample_rate=12000).astype(np.float32)
+    assert np.array_equal(chain.apply_deesser(x), x)
 
 
 # --- whole chain ---------------------------------------------------------------

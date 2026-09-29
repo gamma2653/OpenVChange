@@ -93,37 +93,6 @@ def pitch_shift(data: np.ndarray, semitones: float, state: PitchState) -> np.nda
     return output
 
 
-def deesser(
-    data: np.ndarray,
-    sidechain: np.ndarray,
-    envelope: float,
-    sample_rate: int,
-    threshold_db: float,
-    reduction_db: float,
-) -> tuple[np.ndarray, float]:
-    """Turns the signal down while the sidechain is loud. Returns (output, envelope)."""
-    attack_coeff = np.exp(-1.0 / (1.0 * sample_rate / 1000))
-    release_coeff = np.exp(-1.0 / (50.0 * sample_rate / 1000))
-
-    threshold_linear = 10 ** (threshold_db / 20)
-    reduction_linear = 10 ** (-reduction_db / 20)
-
-    output = np.empty_like(data)
-    for i in range(len(data)):
-        sc_level = abs(sidechain[i])
-        if sc_level > envelope:
-            envelope = attack_coeff * envelope + (1 - attack_coeff) * sc_level
-        else:
-            envelope = release_coeff * envelope + (1 - release_coeff) * sc_level
-
-        if envelope > threshold_linear:
-            output[i] = float(data[i]) * reduction_linear
-        else:
-            output[i] = data[i]
-
-    return output, float(envelope)
-
-
 def compressor(
     data: np.ndarray,
     envelope_db: float,

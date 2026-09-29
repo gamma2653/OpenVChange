@@ -99,6 +99,7 @@ Signal flow (in order):
 - The audio callback has one buffer's worth of time per buffer (21 ms at 1024 samples and 48 kHz). Avoid per-sample Python loops over NumPy arrays in `dsp.py`; they are what made the engine miss that budget
 - Pitch shift uses circular buffer with 4 overlapping read pointers and crossfade to reduce artifacts
 - Dynamics processors measure level with a follower (`dsp.follow`), never from single samples: a waveform crosses zero twice per cycle, so per-sample level detection turns down signals that are well above the threshold
+- De-esser: split-band. It subtracts part of a band-passed copy of the signal (`DEESSER_CENTER_HZ`, `DEESSER_Q`), so everything outside the band passes unchanged. The band filter must stay second order: its phase then never turns by more than a quarter cycle, which is what guarantees the subtraction cannot boost
 - Expander: attack is how fast the gate opens, release how fast it closes. Its gain is smoothed in dB and bottoms out at `EXPANDER_FLOOR_DB`
 - Level meter emits Qt signals for thread-safe GUI updates
 - PyAudio callback runs in separate thread; use Qt signals to communicate with GUI
