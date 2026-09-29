@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from openvchange import presets, settings
 from openvchange.audio import AudioProcessor, AudioStartError
+from openvchange.builtin_presets import BUILT_IN, NEUTRAL, SESSION_DEFAULTS
 from openvchange.widgets import LevelMeter
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class MainWindow(QMainWindow):
         self.effects = self.audio_processor.effects
 
         self.init_ui()
+        self.watch_preset_controls()
         self.populate_devices()
         self.restore_settings()
 
@@ -433,8 +435,16 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(button_layout)
 
-        # Preset buttons
+        # Presets: the ones that come with the app, and the user's own files
         preset_layout = QHBoxLayout()
+        preset_layout.addWidget(QLabel("Preset:"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems(list(BUILT_IN))
+        self.preset_combo.setPlaceholderText("Custom")
+        self.preset_combo.setToolTip("Presets that come with OpenVChange. Shows Custom once you change a setting.")
+        self.preset_combo.activated.connect(self.on_builtin_preset_chosen)
+        preset_layout.addWidget(self.preset_combo, stretch=1)
+
         self.save_preset_button = QPushButton("Save Preset")
         self.save_preset_button.clicked.connect(self.on_save_preset)
         preset_layout.addWidget(self.save_preset_button)
@@ -614,43 +624,32 @@ class MainWindow(QMainWindow):
 
     def on_reset_defaults(self):
         """Reset all filter settings to their default values."""
-        # Effects on, filters disabled
-        self.effects_checkbox.setChecked(True)
-        self.hp_checkbox.setChecked(False)
-        self.lp_checkbox.setChecked(False)
-        self.expander_checkbox.setChecked(False)
-        self.compressor_checkbox.setChecked(False)
-        self.deesser_checkbox.setChecked(False)
+        self.apply_preset({**NEUTRAL, **SESSION_DEFAULTS})
 
-        # Reset slider values
-        self.gain_slider.setValue(0)
-        self.bass_slider.setValue(0)
-        self.treble_slider.setValue(0)
-        self.pitch_slider.setValue(0)
-        self.delay_slider.setValue(0)
-        self.hp_slider.setValue(80)
-        self.lp_slider.setValue(16000)
+    def on_builtin_preset_chosen(self, index):
+        """Apply the built-in preset picked from the list."""
+        name = self.preset_combo.itemText(index)
+        self.apply_preset(BUILT_IN[name])
+        self.status_label.setText(f"Status: Preset applied: {name}")
 
-        # Reset expander
-        self.expander_threshold_slider.setValue(1)
-        self.expander_ratio_slider.setValue(20)
-        self.expander_attack_slider.setValue(5)
-        self.expander_release_slider.setValue(100)
+    def show_matching_builtin_preset(self):
+        """Show in the list which built-in preset the controls match, if any."""
+        current = self.get_preset()
+        for index in range(self.preset_combo.count()):
+            wanted = BUILT_IN[self.preset_combo.itemText(index)]
+            if all(current[name] == value for name, value in wanted.items()):
+                self.preset_combo.setCurrentIndex(index)
+                return
+        self.preset_combo.setCurrentIndex(-1)
 
-        # Reset compressor
-        self.compressor_threshold_slider.setValue(-10)
-        self.compressor_ratio_slider.setValue(40)
-        self.compressor_attack_slider.setValue(10)
-        self.compressor_release_slider.setValue(100)
-        self.compressor_makeup_slider.setValue(0)
-
-        # Reset de-esser
-        self.deesser_threshold_slider.setValue(-20)
-        self.deesser_reduction_slider.setValue(6)
-
-        # Reset advanced settings
-        self.buffer_size_combo.setCurrentIndex(3)  # 1024
-        self.pitch_voices_spin.setValue(4)
+    def watch_preset_controls(self):
+        """Keep the preset list in step with the controls, however they are changed."""
+        for name, control in self.preset_controls().items():
+            if name not in NEUTRAL:
+                continue
+            changed = control.toggled if isinstance(control, QCheckBox) else control.valueChanged
+            changed.connect(self.show_matching_builtin_preset)
+        self.show_matching_builtin_preset()
 
     def preset_controls(self):
         """The controls a preset covers, by the name each has in a preset file."""

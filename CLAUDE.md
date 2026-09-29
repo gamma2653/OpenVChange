@@ -80,6 +80,12 @@ The codebase has three modules:
 - A preset is checked in full before anything is applied. Wrong types refuse the preset; out-of-range numbers are clamped and reported
 - Preset keys and their units (slider units, not engine units) are a file format. Do not rename keys or change what a value means: users have presets on disk
 
+**`openvchange/builtin_presets.py`** - Presets that come with the app
+- `BUILT_IN` maps names to complete presets, defined with `preset(...)` as changes to `NEUTRAL`
+- A built-in preset sets every effect and none of the session settings (master switch, buffer size, pitch voices)
+- The list in the window is never set directly: `show_matching_builtin_preset()` runs whenever a control changes and shows the preset the controls match, or Custom
+- Tests check that every preset fits the controls and leaves headroom on a voice at a normal level. They cannot check how a preset sounds
+
 **`openvchange/settings.py`** - What is remembered between launches
 - Devices (by identity), the device filter, and the effect settings, as `settings.json` in the per-user configuration folder (`%APPDATA%\OpenVChange` on Windows)
 - The effect settings inside it have the same form as a preset and go through the same checks
