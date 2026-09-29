@@ -1,0 +1,121 @@
+name: Release
+
+# On every push to main:
+#   - If there are pending changesets, open or update a "Version OpenVChange"
+#     pull request that bumps the version and writes CHANGELOG.md.
+#   - If there are none and the current version has no tag yet (which is the
+#     case right after that pull request is merged), build the Windows
+#     executable and publish it as a GitHub release.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Queue runs rather than cancelling them, so a release build is never cut short.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  version:
+    name: Version pull request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Changesets
+        run: npm ci
+
+      - name: Check versions are in step
+        run: npm run check-version
+
+      - name: Create or update version pull request
+        id: changesets
+        uses: changesets/action@v2
+        with:
+          version-script: npm run version-packages
+          commit-message: Version OpenVChange
+          pr-title: Version OpenVChange
+          # Tags and releases are created by the release job below, once the
+          # executable has been built.
+          create-github-releases: false
+          push-git-tags: false
+
+      - name: Decide whether to release
+        id: plan
+        if: steps.changesets.outputs.has-changesets == 'false'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "v$version is already tagged; nothing to release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version has no tag yet; releasing."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    name: Build and publish
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install Poetry
+        run: python -m pip install "poetry>=2,<3"
+
+      - name: Install dependencies
+        run: poetry install --with dev --no-interaction
+
+      - name: Check versions are in step
+        run: node scripts/sync-version.mjs --check
+
+      - name: Build executable
+        run: poetry run pyinstaller --noconfirm openvchange.spec
+
+      - name: Write release notes
+        run: node scripts/release-notes.mjs "$VERSION" release-notes.md
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          # Versions below 1.0.0 are published as pre-releases.
+          if [[ "$VERSION" == 0.* ]]; then flags+=(--prerelease); fi
+          gh release create "v$VERSION" "dist/OpenVChange-$VERSION.exe" \
+            --title "OpenVChange v$VERSION" \
+            --notes-file release-notes.md \
+            --target "$GITHUB_SHA" \
+            "${flags[@]}"

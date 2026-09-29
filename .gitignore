@@ -24,5 +24,10 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Top-level JSON files
+# Top-level JSON files (presets), except the npm manifest used by Changesets
 /*.json
+!/package.json
+!/package-lock.json
+
+# Node (Changesets tooling)
+node_modules/

@@ -17,9 +17,21 @@ poetry run openvchange
 
 # Build a standalone one-file Windows executable (output: dist/OpenVChange-<version>.exe)
 poetry run pyinstaller openvchange.spec
+
+# Record a user-facing change for the next release (needs Node 22.11+)
+npm run changeset
 ```
 
 Note: No test framework or linting tools are currently configured.
+
+## Releases
+
+Releases are driven by Changesets. `package.json` is the version source of truth and exists only for that purpose; the app has no JavaScript.
+
+- User-facing changes should include a changeset file in `.changeset/` (frontmatter `"openvchange": patch|minor|major`, then a one-line summary)
+- Never edit the version in `pyproject.toml` by hand; `scripts/sync-version.mjs` copies it from `package.json`, and CI fails if they differ
+- `.github/workflows/release.yml` opens a "Version OpenVChange" pull request while changesets are pending, then builds the exe and publishes a GitHub release tagged `v<version>` once that pull request is merged
+- `changeset init` and `changeset add` are interactive; write changeset files directly when working non-interactively
 
 ## Architecture
 
