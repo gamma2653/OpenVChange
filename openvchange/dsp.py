@@ -4,9 +4,46 @@ Everything here works on float32 NumPy arrays and knows nothing about Qt or audi
 devices, so it can be tested and reused on its own.
 """
 
+import math
+
 import numpy as np
 import numpy.typing as npt
 from scipy import signal
+
+
+def follow(
+    levels: list[float], state: float, rising: float, falling: float, rise_on_equal: bool = False
+) -> tuple[npt.NDArray[np.float64], float]:
+    """Follow `levels` with a one-pole filter that reacts at different speeds up and down.
+
+    `rising` is the coefficient used while the input is above the follower, `falling`
+    while it is below. Closer to 1 is slower. Returns the follower per sample and its
+    final value.
+
+    Each value depends on the one before, so this cannot be done on whole arrays. It
+    runs on plain Python floats, which is several times faster than looping over NumPy
+    scalars, and everything around it is vectorised.
+    """
+    rising_in = 1 - rising
+    falling_in = 1 - falling
+    state = float(state)
+    out = []
+    append = out.append
+    if rise_on_equal:
+        for level in levels:
+            if level < state:
+                state = falling * state + falling_in * level
+            else:
+                state = rising * state + rising_in * level
+            append(state)
+    else:
+        for level in levels:
+            if level > state:
+                state = rising * state + rising_in * level
+            else:
+                state = falling * state + falling_in * level
+            append(state)
+    return np.array(out, dtype=np.float64), state
 
 
 class EffectsChain:
@@ -186,50 +223,38 @@ class EffectsChain:
     def set_deesser_reduction(self, db: float) -> None:
         self.deesser_reduction_db = db
 
-    def apply_expander(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def apply_expander(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Apply smooth expander/gate with envelope follower."""
         if not self.expander_enabled:
             return data
 
         # Calculate attack/release coefficients
-        attack_coeff = np.exp(-1.0 / (self.expander_attack_ms * self.sample_rate / 1000))
-        release_coeff = np.exp(-1.0 / (self.expander_release_ms * self.sample_rate / 1000))
+        attack_coeff = math.exp(-1.0 / (self.expander_attack_ms * self.sample_rate / 1000))
+        release_coeff = math.exp(-1.0 / (self.expander_release_ms * self.sample_rate / 1000))
 
         threshold = self.expander_threshold
         ratio = self.expander_ratio
+        samples = data.astype(np.float64)
+        level = np.abs(samples)
 
-        output = np.empty_like(data)
-        for i in range(len(data)):
-            # Envelope follower - track signal level
-            sample_level = abs(data[i])
+        # Determine target gain based on level vs threshold. Below the threshold the
+        # gain falls with the distance in dB, scaled by the ratio (2:1 turns 1 dB
+        # below into 2 dB below). Silence, or a threshold of zero, closes the gate.
+        target_gain = np.zeros(len(samples), dtype=np.float64)
+        target_gain[level > threshold] = 1.0
+        if threshold > 0:
+            below = (level <= threshold) & (level > 0)
+            db_below = 20 * np.log10(threshold / level[below])
+            gain_reduction_db = db_below * (ratio - 1)
+            target_gain[below] = 10 ** (-gain_reduction_db / 20)
 
-            # Determine target gain based on level vs threshold
-            if sample_level > threshold:
-                target_gain = 1.0
-            else:
-                # Below threshold: reduce gain proportionally based on ratio
-                if threshold > 0 and sample_level > 0:
-                    # How many dB below threshold
-                    db_below = 20 * np.log10(threshold / sample_level)
-                    # Expand by ratio (e.g., 2:1 means 1dB below becomes 2dB below)
-                    gain_reduction_db = db_below * (ratio - 1)
-                    target_gain = 10 ** (-gain_reduction_db / 20)
-                else:
-                    target_gain = 0.0
+        # Smooth the gain: a falling gain uses the attack, a rising one the release.
+        envelope, self.expander_envelope = follow(
+            target_gain.tolist(), self.expander_envelope, rising=release_coeff, falling=attack_coeff, rise_on_equal=True
+        )
+        return (samples * envelope).astype(data.dtype)
 
-            # Smooth envelope with attack/release
-            if target_gain < self.expander_envelope:
-                # Signal dropping - use attack (fast response)
-                self.expander_envelope = attack_coeff * self.expander_envelope + (1 - attack_coeff) * target_gain
-            else:
-                # Signal rising - use release (slow response)
-                self.expander_envelope = release_coeff * self.expander_envelope + (1 - release_coeff) * target_gain
-
-            output[i] = data[i] * self.expander_envelope
-
-        return output
-
-    def apply_deesser(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def apply_deesser(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Apply de-esser using bandpass sidechain detection."""
         if not self.deesser_enabled:
             return data
@@ -246,66 +271,50 @@ class EffectsChain:
         sidechain = self.apply_filter_with_state(b, a, data.copy(), "deesser_sidechain")
 
         # Fast envelope follower for sidechain
-        attack_coeff = np.exp(-1.0 / (1.0 * self.sample_rate / 1000))  # 1ms attack
-        release_coeff = np.exp(-1.0 / (50.0 * self.sample_rate / 1000))  # 50ms release
+        attack_coeff = math.exp(-1.0 / (1.0 * self.sample_rate / 1000))  # 1ms attack
+        release_coeff = math.exp(-1.0 / (50.0 * self.sample_rate / 1000))  # 50ms release
 
         threshold_linear = 10 ** (self.deesser_threshold_db / 20)
         reduction_linear = 10 ** (-self.deesser_reduction_db / 20)
 
-        output = np.empty_like(data)
-        for i in range(len(data)):
-            # Track sidechain envelope
-            sc_level = abs(sidechain[i])
-            if sc_level > self.deesser_envelope:
-                self.deesser_envelope = attack_coeff * self.deesser_envelope + (1 - attack_coeff) * sc_level
-            else:
-                self.deesser_envelope = release_coeff * self.deesser_envelope + (1 - release_coeff) * sc_level
+        envelope, self.deesser_envelope = follow(
+            np.abs(sidechain).tolist(), self.deesser_envelope, rising=attack_coeff, falling=release_coeff
+        )
 
-            # Apply gain reduction when sidechain exceeds threshold
-            if self.deesser_envelope > threshold_linear:
-                output[i] = data[i] * reduction_linear
-            else:
-                output[i] = data[i]
+        # Apply gain reduction when sidechain exceeds threshold
+        reduced = (data.astype(np.float64) * reduction_linear).astype(data.dtype)
+        return np.where(envelope > threshold_linear, reduced, data)
 
-        return output
-
-    def apply_compressor(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
+    def apply_compressor(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Apply dynamic range compression with attack/release."""
         if not self.compressor_enabled:
             return data
 
         # Calculate attack/release coefficients
-        attack_coeff = np.exp(-1.0 / (self.compressor_attack_ms * self.sample_rate / 1000))
-        release_coeff = np.exp(-1.0 / (self.compressor_release_ms * self.sample_rate / 1000))
+        attack_coeff = math.exp(-1.0 / (self.compressor_attack_ms * self.sample_rate / 1000))
+        release_coeff = math.exp(-1.0 / (self.compressor_release_ms * self.sample_rate / 1000))
 
         threshold_db = self.compressor_threshold_db
         ratio = self.compressor_ratio
         makeup_linear = 10 ** (self.compressor_makeup_db / 20)
 
-        output = np.empty_like(data)
-        for i in range(len(data)):
-            # Convert to dB (with floor to avoid log(0))
-            sample_abs = max(abs(data[i]), 1e-10)
-            sample_db = 20 * np.log10(sample_abs)
+        # Convert to dB in the precision of the input, with a floor to avoid log(0)
+        level = np.abs(data)
+        silent = level < 1e-10
+        level_db = (20 * np.log10(np.where(silent, 1.0, level).astype(data.dtype))).astype(np.float64)
+        level_db[silent] = -200.0
 
-            # Envelope follower in dB domain
-            if sample_db > self.compressor_envelope_db:
-                self.compressor_envelope_db = attack_coeff * self.compressor_envelope_db + (1 - attack_coeff) * sample_db
-            else:
-                self.compressor_envelope_db = release_coeff * self.compressor_envelope_db + (1 - release_coeff) * sample_db
+        # Envelope follower in dB domain
+        envelope_db, self.compressor_envelope_db = follow(
+            level_db.tolist(), self.compressor_envelope_db, rising=attack_coeff, falling=release_coeff
+        )
 
-            # Calculate gain reduction
-            if self.compressor_envelope_db > threshold_db:
-                overshoot_db = self.compressor_envelope_db - threshold_db
-                gain_reduction_db = overshoot_db * (1 - 1 / ratio)
-            else:
-                gain_reduction_db = 0.0
+        # Calculate gain reduction
+        gain_reduction_db = np.where(envelope_db > threshold_db, (envelope_db - threshold_db) * (1 - 1 / ratio), 0.0)
 
-            # Apply gain reduction and makeup
-            gain_linear = 10 ** (-gain_reduction_db / 20) * makeup_linear
-            output[i] = data[i] * gain_linear
-
-        return output
+        # Apply gain reduction and makeup
+        gain_linear = 10 ** (-gain_reduction_db / 20) * makeup_linear
+        return (data.astype(np.float64) * gain_linear).astype(data.dtype)
 
     def apply_pitch_shift(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Apply pitch shift using multi-pointer delay line with crossfade.
@@ -551,6 +560,9 @@ class EffectsChain:
 
     def process(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         """Run one buffer of samples in [-1, 1] through the chain."""
+        if len(data) == 0:
+            return data
+
         # Expander/Gate (smooth envelope-based)
         data = self.apply_expander(data)
 

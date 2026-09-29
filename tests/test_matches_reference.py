@@ -191,6 +191,124 @@ def test_pitch_shift_matches_reference_when_the_setting_changes():
         assert chain.pitch_read_pos == state.read_pos
 
 
+# --- dynamics ------------------------------------------------------------------
+
+
+def speech_like(total: int, sizes: list[int], dtype: type = np.float32):
+    """Buffers with loud passages, quiet passages, exact silence, and hiss."""
+    rng = np.random.default_rng(3)
+    t = np.arange(total) / SAMPLE_RATE
+    loudness = np.clip(np.sin(2 * np.pi * 1.7 * t), 0, None) ** 2
+    tone = np.sin(2 * np.pi * 180 * t) + 0.4 * np.sin(2 * np.pi * 6500 * t)
+    x = 0.7 * loudness * tone + 0.002 * rng.standard_normal(total)
+    x[total // 3 : total // 3 + 3000] = 0.0
+    x = x.astype(dtype)
+    start = 0
+    i = 0
+    while start < total:
+        size = sizes[i % len(sizes)]
+        yield x[start : start + size]
+        start += size
+        i += 1
+
+
+def assert_close_audio(out: np.ndarray, expected: np.ndarray) -> None:
+    """Equal to within a couple of steps of the array's own precision.
+
+    The logarithms and powers are evaluated on whole buffers here and on single samples
+    in the reference, and the maths library may round those differently.
+    """
+    assert out.dtype == expected.dtype
+    np.testing.assert_array_max_ulp(out, expected, maxulp=2)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("sizes", [[1024], [128], [300, 1024, 17]])
+@pytest.mark.parametrize(
+    ("threshold_percent", "ratio", "attack_ms", "release_ms"),
+    [(1.0, 2.0, 5.0, 100.0), (10.0, 10.0, 1.0, 300.0), (0.0, 4.0, 5.0, 100.0), (20.0, 1.5, 50.0, 20.0)],
+)
+def test_expander_matches_reference(dtype, sizes, threshold_percent, ratio, attack_ms, release_ms):
+    chain = EffectsChain(SAMPLE_RATE)
+    chain.set_expander_enabled(True)
+    chain.set_expander_threshold(threshold_percent)
+    chain.set_expander_ratio(ratio)
+    chain.set_expander_attack(attack_ms)
+    chain.set_expander_release(release_ms)
+    chain.reset()
+    envelope = 1.0
+
+    for block in speech_like(40_000, sizes, dtype):
+        expected, envelope = reference_dsp.expander(
+            block, envelope, SAMPLE_RATE, threshold_percent / 100.0, ratio, attack_ms, release_ms
+        )
+        assert_close_audio(chain.apply_expander(block), expected)
+        assert chain.expander_envelope == pytest.approx(envelope, rel=1e-12, abs=1e-300)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("sizes", [[1024], [128], [300, 1024, 17]])
+@pytest.mark.parametrize(
+    ("threshold_db", "ratio", "attack_ms", "release_ms", "makeup_db"),
+    [(-10.0, 4.0, 10.0, 100.0, 0.0), (-30.0, 11.4, 27.0, 229.0, 1.0), (0.0, 1.0, 1.0, 10.0, 24.0)],
+)
+def test_compressor_matches_reference(dtype, sizes, threshold_db, ratio, attack_ms, release_ms, makeup_db):
+    chain = EffectsChain(SAMPLE_RATE)
+    chain.set_compressor_enabled(True)
+    chain.set_compressor_threshold(threshold_db)
+    chain.set_compressor_ratio(ratio)
+    chain.set_compressor_attack(attack_ms)
+    chain.set_compressor_release(release_ms)
+    chain.set_compressor_makeup(makeup_db)
+    chain.reset()
+    envelope_db = -60.0
+
+    for block in speech_like(40_000, sizes, dtype):
+        expected, envelope_db = reference_dsp.compressor(
+            block, envelope_db, SAMPLE_RATE, threshold_db, ratio, attack_ms, release_ms, makeup_db
+        )
+        assert_close_audio(chain.apply_compressor(block), expected)
+        # Single-precision logarithms round differently on buffers than on samples.
+        assert chain.compressor_envelope_db == pytest.approx(envelope_db, rel=1e-7)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("sizes", [[1024], [128], [300, 1024, 17]])
+@pytest.mark.parametrize(("threshold_db", "reduction_db"), [(-20.0, 6.0), (-40.0, 12.0), (-2.0, 12.0), (-30.0, 0.0)])
+def test_deesser_matches_reference(dtype, sizes, threshold_db, reduction_db):
+    chain = EffectsChain(SAMPLE_RATE)
+    chain.set_deesser_enabled(True)
+    chain.set_deesser_threshold(threshold_db)
+    chain.set_deesser_reduction(reduction_db)
+    chain.reset()
+    sidechain_filter = EffectsChain(SAMPLE_RATE)
+    b, a = sidechain_filter.coefficients("deesser_sidechain", "bandpass", 5000 / 24000, 8000 / 24000)
+    envelope = 0.0
+
+    for block in speech_like(40_000, sizes, dtype):
+        sidechain = sidechain_filter.apply_filter_with_state(b, a, block.copy(), "deesser_sidechain")
+        expected, envelope = reference_dsp.deesser(block, sidechain, envelope, SAMPLE_RATE, threshold_db, reduction_db)
+        out = chain.apply_deesser(block)
+        assert out.dtype == expected.dtype
+        assert np.array_equal(out, expected)
+        assert chain.deesser_envelope == envelope
+
+
+def test_an_empty_buffer_is_passed_through():
+    chain = EffectsChain(SAMPLE_RATE)
+    chain.set_expander_enabled(True)
+    chain.set_compressor_enabled(True)
+    chain.set_deesser_enabled(True)
+    chain.set_pitch(3.0)
+    chain.set_delay(10.0)
+    chain.reset()
+    empty = np.zeros(0, dtype=np.float32)
+
+    assert len(chain.process(empty)) == 0
+    for effect in (chain.apply_expander, chain.apply_compressor, chain.apply_pitch_shift, chain.apply_delay):
+        assert len(effect(empty)) == 0
+
+
 # --- filter coefficients -------------------------------------------------------
 
 
