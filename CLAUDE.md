@@ -65,6 +65,8 @@ The codebase has three modules:
 - Full-duplex audio (simultaneous input/output)
 - Converts 16-bit PCM to float and back, emits the level meter signal, and handles the master bypass
 - Owns an `EffectsChain` as `.effects`
+- Owns the only `PyAudio` instance (`.pa`). PortAudio scans for devices once, when its first instance is created, and further instances share that scan. Creating a second instance therefore finds nothing new; `refresh_devices()` shuts PortAudio down and starts it again, which is only possible while no stream is open
+- Device indexes change on every refresh. Identify a device by `Device.identity` (name and host API) whenever it has to be found again
 
 **`openvchange/dsp.py`** - Signal processing
 - `EffectsChain`: every effect, working on float32 NumPy arrays

@@ -69,20 +69,30 @@ class FakeStream:
 
 
 class FakePyAudio:
-    """Minimal PyAudio replacement backed by an in-memory device table."""
+    """Minimal PyAudio replacement backed by an in-memory device table.
+
+    Like PortAudio, it looks at the device table only when the library starts up, which is
+    when the first instance is created. Instances created while another is alive share
+    what that one found. Changing `devices` models plugging hardware in or out.
+    """
 
     devices: ClassVar[list[dict]] = list(DEFAULT_DEVICES)
     host_apis: ClassVar[list[dict]] = list(DEFAULT_HOST_APIS)
+    alive: ClassVar[int] = 0
+    scanned: ClassVar[list[dict]] = []
     open_error: ClassVar[Exception | None] = None
     start_error: ClassVar[Exception | None] = None
     instances: ClassVar[list[FakePyAudio]] = []
 
     def __init__(self) -> None:
-        # PortAudio enumerates devices once, when the library is initialised.
-        self._devices = [dict(d) for d in type(self).devices]
+        cls = type(self)
+        if cls.alive == 0:
+            cls.scanned = [dict(d) for d in cls.devices]
+        cls.alive += 1
+        self._devices = cls.scanned
         self.streams: list[FakeStream] = []
         self.terminated = False
-        type(self).instances.append(self)
+        cls.instances.append(self)
 
     @classmethod
     def reset(cls) -> None:
@@ -91,9 +101,13 @@ class FakePyAudio:
         cls.open_error = None
         cls.start_error = None
         cls.instances = []
+        cls.alive = 0
+        cls.scanned = []
 
     def terminate(self) -> None:
+        assert not self.terminated, "terminated twice"
         self.terminated = True
+        type(self).alive -= 1
 
     def get_host_api_count(self) -> int:
         return len(self.host_apis)
@@ -117,6 +131,11 @@ class FakePyAudio:
         return True
 
     def open(self, **kwargs: Any) -> FakeStream:
+        assert not self.terminated, "opened a stream on a terminated instance"
+        for key in ("input_device_index", "output_device_index"):
+            index = kwargs.get(key)
+            if index is not None and not 0 <= index < len(self._devices):
+                raise OSError(-9996, "Invalid device")
         error = type(self).open_error
         if error is not None:
             raise error

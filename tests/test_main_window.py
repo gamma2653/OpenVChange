@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtWidgets import QFileDialog
 
 from openvchange.__main__ import MainWindow
-from tests.fakes import FakePyAudio, device
+from tests.fakes import WASAPI, FakePyAudio, device
 
 
 @pytest.fixture
@@ -58,10 +58,110 @@ def test_device_lists_show_only_wasapi_devices_by_default(window):
     assert combo_items(window.output_combo) == ["Speakers (Realtek)", "CABLE Input (VB-Audio Virtual Cable)"]
 
 
-def test_show_all_devices_lists_every_host_api(window):
+def test_show_all_devices_lists_every_host_api_and_names_it(window):
     window.show_all_devices_checkbox.setChecked(True)
-    assert combo_items(window.input_combo) == ["Microphone (MME)", "Microphone (USB Audio)"]
+    assert combo_items(window.input_combo) == [
+        "Microphone (MME) [MME]",
+        "Microphone (USB Audio) [Windows WASAPI]",
+    ]
     assert len(combo_items(window.output_combo)) == 3
+
+
+def test_changing_the_filter_keeps_the_selected_device(window):
+    window.output_combo.setCurrentIndex(1)
+    assert window.output_combo.currentText() == "CABLE Input (VB-Audio Virtual Cable)"
+
+    window.show_all_devices_checkbox.setChecked(True)
+    assert window.output_combo.currentText() == "CABLE Input (VB-Audio Virtual Cable) [Windows WASAPI]"
+    assert window.output_combo.currentData() == 4
+
+    window.show_all_devices_checkbox.setChecked(False)
+    assert window.output_combo.currentText() == "CABLE Input (VB-Audio Virtual Cable)"
+
+
+def test_the_window_uses_the_instance_the_engine_uses(window):
+    assert len(FakePyAudio.instances) == 1
+    window.show_all_devices_checkbox.setChecked(True)
+    window.on_start()
+    window.on_stop()
+    assert len(FakePyAudio.instances) == 1
+
+
+def plug_in_headset() -> None:
+    """A headset appears, listed ahead of the devices that were already there."""
+    FakePyAudio.devices = [
+        device("Headset Microphone", WASAPI, inputs=1, outputs=0),
+        device("Headset Earphone", WASAPI, inputs=0, outputs=2),
+        *FakePyAudio.devices,
+    ]
+
+
+def test_a_device_plugged_in_later_is_not_listed_until_refresh(window):
+    plug_in_headset()
+    window.show_all_devices_checkbox.setChecked(True)
+    window.show_all_devices_checkbox.setChecked(False)
+    assert combo_items(window.input_combo) == ["Microphone (USB Audio)"]
+
+
+def test_refresh_finds_a_device_plugged_in_later(window):
+    plug_in_headset()
+
+    window.refresh_devices_button.click()
+
+    assert combo_items(window.input_combo) == ["Headset Microphone", "Microphone (USB Audio)"]
+    assert combo_items(window.output_combo) == [
+        "Headset Earphone",
+        "Speakers (Realtek)",
+        "CABLE Input (VB-Audio Virtual Cable)",
+    ]
+    assert window.status_label.text() == "Status: Found 5 devices"
+
+
+def test_refresh_keeps_the_selection_even_though_its_index_moved(window):
+    window.output_combo.setCurrentIndex(1)
+    assert window.output_combo.currentData() == 4
+    plug_in_headset()
+
+    window.refresh_devices_button.click()
+
+    assert window.input_combo.currentText() == "Microphone (USB Audio)"
+    assert window.output_combo.currentText() == "CABLE Input (VB-Audio Virtual Cable)"
+    assert window.output_combo.currentData() == 6
+
+
+def test_start_after_refresh_opens_the_device_that_is_shown(window):
+    window.output_combo.setCurrentIndex(1)
+    plug_in_headset()
+    window.refresh_devices_button.click()
+
+    window.on_start()
+
+    engine = window.audio_processor
+    stream = engine.pa.streams[0]
+    assert engine.pa.get_device_info_by_index(stream.kwargs["input_device_index"])["name"] == "Microphone (USB Audio)"
+    assert engine.pa.get_device_info_by_index(stream.kwargs["output_device_index"])["name"] == (
+        "CABLE Input (VB-Audio Virtual Cable)"
+    )
+
+
+def test_refresh_falls_back_to_the_first_device_when_the_selected_one_is_gone(window):
+    window.output_combo.setCurrentIndex(1)
+    FakePyAudio.devices = [d for d in FakePyAudio.devices if "CABLE" not in d["name"]]
+
+    window.refresh_devices_button.click()
+
+    assert combo_items(window.output_combo) == ["Speakers (Realtek)"]
+    assert window.output_combo.currentText() == "Speakers (Realtek)"
+
+
+def test_devices_cannot_be_changed_or_refreshed_while_running(window):
+    window.on_start()
+    assert not window.refresh_devices_button.isEnabled()
+    assert not window.show_all_devices_checkbox.isEnabled()
+
+    window.on_stop()
+    assert window.refresh_devices_button.isEnabled()
+    assert window.show_all_devices_checkbox.isEnabled()
 
 
 def test_device_lists_fall_back_to_everything_without_wasapi(qapp):
@@ -428,10 +528,11 @@ def test_level_meter_follows_the_engine(window):
 def test_closing_the_window_stops_audio(window):
     window.on_start()
     engine = window.audio_processor
-    stream = engine.pa.streams[0]
+    pa = engine.pa
+    stream = pa.streams[0]
 
     window.close()
 
     assert not engine.running
     assert stream.closed
-    assert engine.pa.terminated
+    assert pa.terminated

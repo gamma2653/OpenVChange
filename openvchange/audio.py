@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 import numpy as np
 import pyaudio
@@ -14,6 +15,22 @@ logger = logging.getLogger(__name__)
 
 class AudioStartError(Exception):
     """The audio stream could not be started. The message is meant to be shown to the user."""
+
+
+@dataclass(frozen=True)
+class Device:
+    """An audio device as PortAudio lists it."""
+
+    index: int  # only valid until the next refresh
+    name: str
+    host_api: str
+    is_input: bool
+    is_output: bool
+
+    @property
+    def identity(self) -> str:
+        """What stays the same about a device when the list is refreshed."""
+        return f"{self.host_api}: {self.name}"
 
 
 class AudioProcessor(QObject):
@@ -45,6 +62,55 @@ class AudioProcessor(QObject):
         self.failed = False
 
         self.pa = pyaudio.PyAudio()
+
+    def list_devices(self, all_host_apis: bool = False) -> list[Device]:
+        """The devices PortAudio found when it last looked.
+
+        By default only WASAPI devices are listed, since that is the low-latency
+        interface on Windows and the same hardware shows up once per interface. Where
+        there is no WASAPI, everything is listed.
+        """
+        host_apis = [
+            str(self.pa.get_host_api_info_by_index(i)["name"]) for i in range(self.pa.get_host_api_count())
+        ]
+        wasapi = next((i for i, name in enumerate(host_apis) if "WASAPI" in name), None)
+
+        devices = []
+        for index in range(self.pa.get_device_count()):
+            info = self.pa.get_device_info_by_index(index)
+            host_api = int(info["hostApi"])
+            if not all_host_apis and wasapi is not None and host_api != wasapi:
+                continue
+            devices.append(
+                Device(
+                    index=index,
+                    name=str(info["name"]),
+                    host_api=host_apis[host_api] if 0 <= host_api < len(host_apis) else "",
+                    is_input=int(info["maxInputChannels"]) > 0,
+                    is_output=int(info["maxOutputChannels"]) > 0,
+                )
+            )
+        return devices
+
+    def shut_down(self) -> None:
+        """Stop the stream and release PortAudio. Safe to call more than once."""
+        self.stop()
+        if self.pa is not None:
+            self.pa.terminate()
+            self.pa = None
+
+    def refresh_devices(self) -> None:
+        """Look for devices again, to find ones plugged in since the last look.
+
+        PortAudio only scans when it starts up, so it is shut down and started again.
+        That invalidates every device index, and cannot be done while a stream is open.
+        """
+        if self.running or self.stream is not None:
+            raise RuntimeError("devices cannot be refreshed while audio is running")
+        self.pa.terminate()
+        self.pa = pyaudio.PyAudio()
+        self.input_device = None
+        self.output_device = None
 
     def set_input_device(self, device_index: int) -> None:
         self.input_device = device_index

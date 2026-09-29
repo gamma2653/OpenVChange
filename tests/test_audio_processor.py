@@ -246,3 +246,67 @@ def test_bypass_still_passes_audio_through_untouched(qapp):
     p.set_effects_enabled(False)
     voice = to_pcm(sine(300.0, 0.5, seconds=0.1))[:1024].tobytes()
     assert p.pa.streams[0].feed(voice) == voice
+
+
+# --- devices ---------------------------------------------------------------------
+
+
+def test_devices_are_listed_with_their_host_api():
+    p = AudioProcessor()
+
+    wasapi = p.list_devices()
+    everything = p.list_devices(all_host_apis=True)
+
+    assert [d.name for d in wasapi] == [
+        "Microphone (USB Audio)",
+        "Speakers (Realtek)",
+        "CABLE Input (VB-Audio Virtual Cable)",
+    ]
+    assert {d.host_api for d in wasapi} == {"Windows WASAPI"}
+    assert [d.index for d in everything] == [0, 1, 2, 3, 4]
+    assert [d.is_input for d in everything] == [True, False, True, False, False]
+    assert everything[0].identity == "MME: Microphone (MME)"
+
+
+def test_refresh_restarts_portaudio_to_scan_again():
+    p = AudioProcessor()
+    first = p.pa
+    FakePyAudio.devices = [*FakePyAudio.devices, device("Headset", WASAPI, inputs=1, outputs=2)]
+    assert len(p.list_devices(all_host_apis=True)) == 5
+
+    p.refresh_devices()
+
+    assert first.terminated
+    assert p.pa is not first
+    assert len(p.list_devices(all_host_apis=True)) == 6
+
+
+def test_refresh_forgets_device_indexes_because_they_no_longer_mean_anything():
+    p = AudioProcessor()
+    p.set_input_device(MIC)
+    p.set_output_device(SPEAKERS)
+
+    p.refresh_devices()
+
+    with pytest.raises(AudioStartError, match="Select an input and an output device"):
+        p.start()
+
+
+def test_refresh_is_refused_while_running():
+    p = started_processor()
+    with pytest.raises(RuntimeError, match="while audio is running"):
+        p.refresh_devices()
+    assert not p.pa.terminated
+
+
+def test_shut_down_releases_portaudio_once():
+    p = started_processor()
+    pa = p.pa
+    stream = pa.streams[0]
+
+    p.shut_down()
+    p.shut_down()
+
+    assert stream.closed
+    assert pa.terminated
+    assert FakePyAudio.alive == 0

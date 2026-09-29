@@ -2,7 +2,6 @@
 
 import sys
 
-import pyaudio
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -24,6 +23,9 @@ from PySide6.QtWidgets import (
 
 from openvchange import presets
 from openvchange.audio import AudioProcessor, AudioStartError
+
+# Where each entry of a device list keeps the name and host API of its device.
+DEVICE_IDENTITY_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class MainWindow(QMainWindow):
@@ -64,9 +66,16 @@ class MainWindow(QMainWindow):
         self.output_combo = QComboBox()
         self.show_all_devices_checkbox = QCheckBox("Show all devices")
         self.show_all_devices_checkbox.toggled.connect(self.on_show_all_devices_toggled)
+        self.refresh_devices_button = QPushButton("Refresh")
+        self.refresh_devices_button.setToolTip("Look for devices that were plugged in or removed")
+        self.refresh_devices_button.clicked.connect(self.on_refresh_devices)
+        device_options = QHBoxLayout()
+        device_options.addWidget(self.show_all_devices_checkbox)
+        device_options.addStretch()
+        device_options.addWidget(self.refresh_devices_button)
         device_layout.addRow("Input Device:", self.input_combo)
         device_layout.addRow("Output Device:", self.output_combo)
-        device_layout.addRow("", self.show_all_devices_checkbox)
+        device_layout.addRow("", device_options)
 
         device_group.setLayout(device_layout)
         main_layout.addWidget(device_group)
@@ -420,42 +429,35 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status_label)
 
     def populate_devices(self):
-        """Populate device combo boxes with available audio devices."""
-        self.input_combo.clear()
-        self.output_combo.clear()
-
-        pa = pyaudio.PyAudio()
+        """Fill the device lists, keeping the current selection where it still exists."""
         show_all = self.show_all_devices_checkbox.isChecked()
+        devices = self.audio_processor.list_devices(all_host_apis=show_all)
 
-        # Find WASAPI host API index (preferred for Windows)
-        wasapi_index = None
-        if not show_all:
-            for i in range(pa.get_host_api_count()):
-                host_info = pa.get_host_api_info_by_index(i)
-                if "WASAPI" in str(host_info["name"]):
-                    wasapi_index = i
-                    break
-
-        for i in range(pa.get_device_count()):
-            device_info = pa.get_device_info_by_index(i)
-
-            # Only show WASAPI devices if available and not showing all
-            if wasapi_index is not None and int(device_info["hostApi"]) != wasapi_index:
-                continue
-
-            name = str(device_info["name"])
-
-            if int(device_info["maxInputChannels"]) > 0:
-                self.input_combo.addItem(name, i)
-
-            if int(device_info["maxOutputChannels"]) > 0:
-                self.output_combo.addItem(name, i)
-
-        pa.terminate()
+        for combo, wanted in ((self.input_combo, "is_input"), (self.output_combo, "is_output")):
+            selected = combo.currentData(DEVICE_IDENTITY_ROLE)
+            combo.clear()
+            for device in devices:
+                if not getattr(device, wanted):
+                    continue
+                # The same hardware appears once per host API, so say which one this is.
+                label = f"{device.name} [{device.host_api}]" if show_all else device.name
+                combo.addItem(label, device.index)
+                combo.setItemData(combo.count() - 1, device.identity, DEVICE_IDENTITY_ROLE)
+            if selected is not None:
+                index = combo.findData(selected, DEVICE_IDENTITY_ROLE)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
 
     def on_show_all_devices_toggled(self, checked):
         """Handle show all devices checkbox toggle."""
         self.populate_devices()
+
+    def on_refresh_devices(self):
+        """Look for devices that were plugged in or removed since the list was built."""
+        self.audio_processor.refresh_devices()
+        self.populate_devices()
+        found = self.input_combo.count() + self.output_combo.count()
+        self.status_label.setText(f"Status: Found {found} devices")
 
     def on_effects_toggled(self, checked):
         self.audio_processor.set_effects_enabled(checked)
@@ -769,6 +771,8 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(True)
         self.input_combo.setEnabled(False)
         self.output_combo.setEnabled(False)
+        self.show_all_devices_checkbox.setEnabled(False)
+        self.refresh_devices_button.setEnabled(False)
         self.buffer_size_combo.setEnabled(False)
         self.pitch_voices_spin.setEnabled(False)
         self.status_label.setText("Status: Running")
@@ -781,6 +785,8 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.input_combo.setEnabled(True)
         self.output_combo.setEnabled(True)
+        self.show_all_devices_checkbox.setEnabled(True)
+        self.refresh_devices_button.setEnabled(True)
         self.buffer_size_combo.setEnabled(True)
         self.pitch_voices_spin.setEnabled(True)
         self.apply_stream_settings()
@@ -794,8 +800,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event."""
-        self.audio_processor.stop()
-        self.audio_processor.pa.terminate()
+        self.audio_processor.shut_down()
         event.accept()
 
 
