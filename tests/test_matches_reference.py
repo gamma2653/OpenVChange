@@ -225,30 +225,6 @@ def assert_close_audio(out: np.ndarray, expected: np.ndarray) -> None:
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 @pytest.mark.parametrize("sizes", [[1024], [128], [300, 1024, 17]])
 @pytest.mark.parametrize(
-    ("threshold_percent", "ratio", "attack_ms", "release_ms"),
-    [(1.0, 2.0, 5.0, 100.0), (10.0, 10.0, 1.0, 300.0), (0.0, 4.0, 5.0, 100.0), (20.0, 1.5, 50.0, 20.0)],
-)
-def test_expander_matches_reference(dtype, sizes, threshold_percent, ratio, attack_ms, release_ms):
-    chain = EffectsChain(SAMPLE_RATE)
-    chain.set_expander_enabled(True)
-    chain.set_expander_threshold(threshold_percent)
-    chain.set_expander_ratio(ratio)
-    chain.set_expander_attack(attack_ms)
-    chain.set_expander_release(release_ms)
-    chain.reset()
-    envelope = 1.0
-
-    for block in speech_like(40_000, sizes, dtype):
-        expected, envelope = reference_dsp.expander(
-            block, envelope, SAMPLE_RATE, threshold_percent / 100.0, ratio, attack_ms, release_ms
-        )
-        assert_close_audio(chain.apply_expander(block), expected)
-        assert chain.expander_envelope == pytest.approx(envelope, rel=1e-12, abs=1e-300)
-
-
-@pytest.mark.parametrize("dtype", [np.float32, np.float64])
-@pytest.mark.parametrize("sizes", [[1024], [128], [300, 1024, 17]])
-@pytest.mark.parametrize(
     ("threshold_db", "ratio", "attack_ms", "release_ms", "makeup_db"),
     [(-10.0, 4.0, 10.0, 100.0, 0.0), (-30.0, 11.4, 27.0, 229.0, 1.0), (0.0, 1.0, 1.0, 10.0, 24.0)],
 )

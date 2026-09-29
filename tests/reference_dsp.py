@@ -93,42 +93,6 @@ def pitch_shift(data: np.ndarray, semitones: float, state: PitchState) -> np.nda
     return output
 
 
-def expander(
-    data: np.ndarray,
-    envelope: float,
-    sample_rate: int,
-    threshold: float,
-    ratio: float,
-    attack_ms: float,
-    release_ms: float,
-) -> tuple[np.ndarray, float]:
-    """Downward expander acting on the level of each sample. Returns (output, envelope)."""
-    attack_coeff = np.exp(-1.0 / (attack_ms * sample_rate / 1000))
-    release_coeff = np.exp(-1.0 / (release_ms * sample_rate / 1000))
-
-    output = np.empty_like(data)
-    for i in range(len(data)):
-        sample_level = float(abs(data[i]))
-
-        if sample_level > threshold:
-            target_gain = 1.0
-        elif threshold > 0 and sample_level > 0:
-            db_below = 20 * np.log10(threshold / sample_level)
-            gain_reduction_db = db_below * (ratio - 1)
-            target_gain = 10 ** (-gain_reduction_db / 20)
-        else:
-            target_gain = 0.0
-
-        if target_gain < envelope:
-            envelope = attack_coeff * envelope + (1 - attack_coeff) * target_gain
-        else:
-            envelope = release_coeff * envelope + (1 - release_coeff) * target_gain
-
-        output[i] = float(data[i]) * envelope
-
-    return output, float(envelope)
-
-
 def deesser(
     data: np.ndarray,
     sidechain: np.ndarray,

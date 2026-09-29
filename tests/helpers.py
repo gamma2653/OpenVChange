@@ -161,3 +161,17 @@ def dominant_frequency(x: np.ndarray, sample_rate: int = SAMPLE_RATE) -> float:
     a, b, c = np.log(spectrum[k - 1 : k + 2] + 1e-20)
     offset = 0.5 * (a - c) / (a - 2 * b + c)
     return (k + offset) * sample_rate / len(x)
+
+
+def distortion_percent(x: np.ndarray, freq: float, sample_rate: int = SAMPLE_RATE) -> float:
+    """Harmonics two to ten relative to the fundamental, measured on the settled half.
+
+    `freq` must fit a whole number of cycles into that half, so no window is needed.
+    """
+    settled = tail(np.asarray(x, dtype=np.float64))
+    cycles = freq * len(settled) / sample_rate
+    assert abs(cycles - round(cycles)) < 1e-9, "frequency does not fit the analysis length"
+    spectrum = np.abs(np.fft.rfft(settled))
+    k = round(cycles)
+    harmonics = [spectrum[k * m] for m in range(2, 11) if k * m < len(spectrum)]
+    return 100.0 * float(np.sqrt(np.sum(np.square(harmonics))) / spectrum[k])

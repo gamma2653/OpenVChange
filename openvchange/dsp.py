@@ -12,13 +12,13 @@ from scipy import signal
 
 
 def follow(
-    levels: list[float], state: float, rising: float, falling: float, rise_on_equal: bool = False
+    levels: list[float], state: float, rising: float, falling: float
 ) -> tuple[npt.NDArray[np.float64], float]:
     """Follow `levels` with a one-pole filter that reacts at different speeds up and down.
 
     `rising` is the coefficient used while the input is above the follower, `falling`
-    while it is below. Closer to 1 is slower. Returns the follower per sample and its
-    final value.
+    while it is below. Closer to 1 is slower, and 0 follows the input at once. Returns
+    the follower per sample and its final value.
 
     Each value depends on the one before, so this cannot be done on whole arrays. It
     runs on plain Python floats, which is several times faster than looping over NumPy
@@ -29,21 +29,27 @@ def follow(
     state = float(state)
     out = []
     append = out.append
-    if rise_on_equal:
-        for level in levels:
-            if level < state:
-                state = falling * state + falling_in * level
-            else:
-                state = rising * state + rising_in * level
-            append(state)
-    else:
-        for level in levels:
-            if level > state:
-                state = rising * state + rising_in * level
-            else:
-                state = falling * state + falling_in * level
-            append(state)
+    for level in levels:
+        if level > state:
+            state = rising * state + rising_in * level
+        else:
+            state = falling * state + falling_in * level
+        append(state)
     return np.array(out, dtype=np.float64), state
+
+
+def time_coefficient(time_ms: float, sample_rate: int) -> float:
+    """One-pole coefficient that covers about 63% of a step in `time_ms`."""
+    return math.exp(-1.0 / (time_ms * sample_rate / 1000))
+
+
+# How long the expander remembers a peak. Long enough to bridge the gap between the
+# peaks of a low note, short enough that the gate still starts closing promptly.
+EXPANDER_DETECTOR_RELEASE_MS = 50.0
+
+# Gain of a fully closed gate. Low enough to be inaudible, and finite so that the
+# gate takes the same time to open however long it has been closed.
+EXPANDER_FLOOR_DB = -80.0
 
 
 class EffectsChain:
@@ -87,9 +93,10 @@ class EffectsChain:
         self.expander_enabled = False
         self.expander_threshold = 0.01  # Linear (0-1)
         self.expander_ratio = 2.0  # 2:1 = soft, 10:1 = hard gate
-        self.expander_attack_ms = 5.0  # Fast attack
-        self.expander_release_ms = 100.0  # Slow release
-        self.expander_envelope = 1.0  # Current gain envelope
+        self.expander_attack_ms = 5.0  # How fast the gate opens
+        self.expander_release_ms = 100.0  # How fast it closes
+        self.expander_level = 0.0  # Detected signal level
+        self.expander_gain_db = 0.0  # Current gain
 
         # Compressor
         self.compressor_enabled = False
@@ -138,7 +145,8 @@ class EffectsChain:
     def reset_effect_states(self) -> None:
         """Clear filter/envelope state so the chain restarts cleanly."""
         self.filter_states = {}
-        self.expander_envelope = 1.0
+        self.expander_level = 0.0
+        self.expander_gain_db = 0.0
         self.compressor_envelope_db = -60.0
         self.deesser_envelope = 0.0
         self.gain_smoothed = self.gain_target
@@ -224,35 +232,45 @@ class EffectsChain:
         self.deesser_reduction_db = db
 
     def apply_expander(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
-        """Apply smooth expander/gate with envelope follower."""
+        """Turn the signal down while it is quieter than the threshold.
+
+        The level is measured by a peak detector, not read off single samples, so a
+        signal above the threshold passes unchanged even as its waveform crosses zero.
+        The gain then opens at the attack speed and closes at the release speed.
+        """
         if not self.expander_enabled:
             return data
-
-        # Calculate attack/release coefficients
-        attack_coeff = math.exp(-1.0 / (self.expander_attack_ms * self.sample_rate / 1000))
-        release_coeff = math.exp(-1.0 / (self.expander_release_ms * self.sample_rate / 1000))
 
         threshold = self.expander_threshold
         ratio = self.expander_ratio
         samples = data.astype(np.float64)
-        level = np.abs(samples)
 
-        # Determine target gain based on level vs threshold. Below the threshold the
-        # gain falls with the distance in dB, scaled by the ratio (2:1 turns 1 dB
-        # below into 2 dB below). Silence, or a threshold of zero, closes the gate.
-        target_gain = np.zeros(len(samples), dtype=np.float64)
-        target_gain[level > threshold] = 1.0
-        if threshold > 0:
-            below = (level <= threshold) & (level > 0)
-            db_below = 20 * np.log10(threshold / level[below])
-            gain_reduction_db = db_below * (ratio - 1)
-            target_gain[below] = 10 ** (-gain_reduction_db / 20)
-
-        # Smooth the gain: a falling gain uses the attack, a rising one the release.
-        envelope, self.expander_envelope = follow(
-            target_gain.tolist(), self.expander_envelope, rising=release_coeff, falling=attack_coeff, rise_on_equal=True
+        # Level detector: jumps to each new peak, then decays.
+        level, self.expander_level = follow(
+            np.abs(samples).tolist(),
+            self.expander_level,
+            rising=0.0,
+            falling=time_coefficient(EXPANDER_DETECTOR_RELEASE_MS, self.sample_rate),
         )
-        return (samples * envelope).astype(data.dtype)
+
+        # Below the threshold the gain falls with the distance in dB, scaled by the
+        # ratio (2:1 turns 1 dB below into 2 dB below), down to the floor. Silence
+        # closes the gate fully, and a threshold of zero leaves nothing below it.
+        target_db = np.full(len(samples), EXPANDER_FLOOR_DB)
+        target_db[level >= threshold] = 0.0
+        below = (level < threshold) & (level > 0)
+        db_below = 20 * np.log10(threshold / level[below])
+        target_db[below] = np.maximum(-db_below * (ratio - 1), EXPANDER_FLOOR_DB)
+
+        # Smooth the gain in dB, which is how loudness is heard: opening uses the
+        # attack, closing the release.
+        gain_db, self.expander_gain_db = follow(
+            target_db.tolist(),
+            self.expander_gain_db,
+            rising=time_coefficient(self.expander_attack_ms, self.sample_rate),
+            falling=time_coefficient(self.expander_release_ms, self.sample_rate),
+        )
+        return (samples * 10 ** (gain_db / 20)).astype(data.dtype)
 
     def apply_deesser(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
         """Apply de-esser using bandpass sidechain detection."""
@@ -271,8 +289,8 @@ class EffectsChain:
         sidechain = self.apply_filter_with_state(b, a, data.copy(), "deesser_sidechain")
 
         # Fast envelope follower for sidechain
-        attack_coeff = math.exp(-1.0 / (1.0 * self.sample_rate / 1000))  # 1ms attack
-        release_coeff = math.exp(-1.0 / (50.0 * self.sample_rate / 1000))  # 50ms release
+        attack_coeff = time_coefficient(1.0, self.sample_rate)
+        release_coeff = time_coefficient(50.0, self.sample_rate)
 
         threshold_linear = 10 ** (self.deesser_threshold_db / 20)
         reduction_linear = 10 ** (-self.deesser_reduction_db / 20)
@@ -290,9 +308,8 @@ class EffectsChain:
         if not self.compressor_enabled:
             return data
 
-        # Calculate attack/release coefficients
-        attack_coeff = math.exp(-1.0 / (self.compressor_attack_ms * self.sample_rate / 1000))
-        release_coeff = math.exp(-1.0 / (self.compressor_release_ms * self.sample_rate / 1000))
+        attack_coeff = time_coefficient(self.compressor_attack_ms, self.sample_rate)
+        release_coeff = time_coefficient(self.compressor_release_ms, self.sample_rate)
 
         threshold_db = self.compressor_threshold_db
         ratio = self.compressor_ratio

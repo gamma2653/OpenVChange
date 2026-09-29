@@ -5,12 +5,15 @@ import pytest
 
 from tests.helpers import (
     SAMPLE_RATE,
+    db,
+    distortion_percent,
     dominant_frequency,
     from_pcm,
     level_change_db,
     make_processor,
     process,
     process_pcm,
+    rms,
     sine,
     tail,
     to_pcm,
@@ -213,14 +216,96 @@ def test_compressor_makeup_gain_raises_the_level():
     assert change_db(settings, 300.0, 0.01) == pytest.approx(6.0, abs=0.1)
 
 
-def test_expander_silences_signals_below_the_threshold():
-    settings = {"expander_enabled": True, "expander_threshold_percent": 5.0, "expander_ratio": 4.0}
-    assert change_db(settings, 300.0, 0.005) < -20.0
+EXPANDER = {"expander_enabled": True, "expander_threshold_percent": 5.0, "expander_ratio": 4.0}
 
 
-def test_expander_mostly_keeps_signals_above_the_threshold():
-    settings = {"expander_enabled": True, "expander_threshold_percent": 5.0, "expander_ratio": 4.0}
-    assert -6.0 < change_db(settings, 300.0, 0.5) <= 0.0
+@pytest.mark.parametrize("freq", [80.0, 300.0, 3000.0])
+@pytest.mark.parametrize("amplitude", [0.5, 0.1, 0.06])
+def test_expander_leaves_signals_above_the_threshold_alone(freq, amplitude):
+    assert change_db(EXPANDER, freq, amplitude) == pytest.approx(0.0, abs=0.05)
+
+
+@pytest.mark.parametrize("freq", [80.0, 300.0, 3000.0])
+def test_expander_turns_quiet_signals_down_by_the_ratio(freq):
+    # Half the threshold is 6 dB below it. At 4:1 that becomes 24 dB below, so 18 dB are
+    # removed. The detector sags a little between peaks, which removes slightly more.
+    assert change_db(EXPANDER, freq, 0.025) == pytest.approx(-18.1, abs=2.0)
+
+
+def burst_gain_db(out: np.ndarray, x: np.ndarray, at_seconds: float, window: int = 480) -> float:
+    start = int(at_seconds * SAMPLE_RATE)
+    return db(rms(out[start : start + window]) / rms(x[start : start + window]))
+
+
+def speech_burst() -> np.ndarray:
+    """Hiss, then 0.4 s of tone starting at 0.3 s, then hiss again."""
+    rng = np.random.default_rng(0)
+    x = 0.002 * rng.standard_normal(int(1.3 * SAMPLE_RATE))
+    start = int(0.3 * SAMPLE_RATE)
+    x[start : start + int(0.4 * SAMPLE_RATE)] += sine(300.0, 0.3, seconds=0.4)
+    return x.astype(np.float32)
+
+
+def run_expander(x: np.ndarray, **settings: float) -> np.ndarray:
+    """The expander alone, without the soft clipper or the conversion to 16 bits."""
+    chain = make_processor(**{**EXPANDER, **settings}).effects
+    return np.concatenate([chain.apply_expander(x[i : i + 1000]) for i in range(0, len(x), 1000)])
+
+
+def test_expander_closes_fully_on_signals_far_below_the_threshold():
+    x = sine(300.0, 0.002).astype(np.float32)
+    assert level_change_db(run_expander(x), x) == pytest.approx(-80.0, abs=0.5)
+    # At 16 bits that is silence.
+    assert not tail(process_pcm(make_processor(**EXPANDER), to_pcm(x))).any()
+
+
+def test_expander_with_a_threshold_of_zero_changes_nothing():
+    settings = {**EXPANDER, "expander_threshold_percent": 0.0}
+    assert change_db(settings, 300.0, 0.002) == pytest.approx(0.0, abs=0.01)
+
+
+@pytest.mark.parametrize("amplitude", [0.1, 0.025])
+def test_expander_adds_little_distortion_to_a_low_note(amplitude):
+    # Above the threshold there is none. Below it the detector sags between the peaks of
+    # the waveform, which moves the gain a little within each cycle.
+    out = run_expander(sine(80.0, amplitude).astype(np.float32))
+    assert distortion_percent(out, 80.0) < (0.001 if amplitude > 0.05 else 1.0)
+
+
+def test_expander_opens_within_the_attack_time():
+    x = speech_burst()
+    out = run_expander(x, expander_attack_ms=5.0, expander_release_ms=100.0)
+
+    assert burst_gain_db(out, x, 0.2) < -40.0  # closed on the hiss before the tone
+    assert burst_gain_db(out, x, 0.3 + 0.005) > -12.0  # audible almost at once
+    assert burst_gain_db(out, x, 0.3 + 0.025) > -0.5  # fully open five attack times in
+    assert burst_gain_db(out, x, 0.5) == pytest.approx(0.0, abs=0.01)
+
+
+def test_expander_closes_gradually_over_the_release_time():
+    x = speech_burst()
+    out = run_expander(x, expander_attack_ms=5.0, expander_release_ms=100.0)
+
+    just_after = burst_gain_db(out, x, 0.7 + 0.020)
+    later = burst_gain_db(out, x, 0.7 + 0.200)
+    much_later = burst_gain_db(out, x, 0.7 + 0.500)
+    assert just_after > -3.0  # the tail of the word is kept
+    assert later < just_after - 6.0
+    assert much_later < -40.0
+
+
+def test_a_longer_release_keeps_the_gate_open_longer():
+    x = speech_burst()
+    fast = run_expander(x, expander_release_ms=20.0)
+    slow = run_expander(x, expander_release_ms=400.0)
+    assert burst_gain_db(slow, x, 0.7 + 0.200) > burst_gain_db(fast, x, 0.7 + 0.200) + 10.0
+
+
+def test_a_longer_attack_opens_the_gate_more_slowly():
+    x = speech_burst()
+    fast = run_expander(x, expander_attack_ms=1.0)
+    slow = run_expander(x, expander_attack_ms=50.0)
+    assert burst_gain_db(fast, x, 0.3 + 0.010, window=240) > burst_gain_db(slow, x, 0.3 + 0.010, window=240) + 6.0
 
 
 def test_deesser_turns_down_sibilance_only():
