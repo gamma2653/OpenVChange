@@ -129,3 +129,32 @@ def compressor(
         output[i] = float(data[i]) * gain_linear
 
     return output, float(envelope_db)
+
+
+def biquad(
+    data: np.ndarray, b: np.ndarray, a: np.ndarray, state: tuple[float, float]
+) -> tuple[np.ndarray, tuple[float, float]]:
+    """A second-order filter, one sample at a time, in transposed direct form II.
+
+    This is the structure `scipy.signal.lfilter` uses. Returns (output, state).
+    """
+    b0, b1, b2 = (float(v) for v in b)
+    a1, a2 = float(a[1]), float(a[2])
+    z0, z1 = state
+    out = []
+    for x in np.asarray(data, dtype=np.float64).tolist():
+        y = b0 * x + z0
+        z0 = b1 * x - a1 * y + z1
+        z1 = b2 * x - a2 * y
+        out.append(y)
+    return np.array(out), (z0, z1)
+
+
+def biquad_settled_state(b: np.ndarray, a: np.ndarray, level: float) -> tuple[float, float]:
+    """The state of `biquad` after an input that has been at `level` for ever."""
+    b0, b1, b2 = (float(v) for v in b)
+    a1, a2 = float(a[1]), float(a[2])
+    out = level * (b0 + b1 + b2) / (1 + a1 + a2)
+    z1 = b2 * level - a2 * out
+    z0 = b1 * level - a1 * out + z1
+    return z0, z1

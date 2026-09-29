@@ -25,7 +25,7 @@ A virtual audio routing and real-time DSP application for Windows. Captures audi
 - Status display showing running/stopped state
 
 ### Signal Quality
-- Stateful filtering using `scipy.lfilter` with `lfilter_zi` — no clicks or pops between audio chunks
+- Filters carry their state from one buffer to the next — no clicks or pops between audio chunks
 - Soft clipping to prevent digital distortion
 - Full-duplex callback-based streaming for minimal latency
 
@@ -88,7 +88,7 @@ poetry install --with dev
 poetry run pyinstaller openvchange.spec
 ```
 
-The result is a single self-contained `dist/OpenVChange-<version>.exe`, where the version comes from `pyproject.toml`. The spec file trims unused Qt modules, so the build is roughly 65 MB. Because it is a one-file build, the exe unpacks itself to a temp directory on launch, so the first window takes a few seconds to appear.
+The result is a single self-contained `dist/OpenVChange-<version>.exe`, where the version comes from `pyproject.toml`. The spec file trims unused Qt modules, so the build is roughly 34 MB. Because it is a one-file build, the exe unpacks itself to a temp directory on launch, so the first window takes a few seconds to appear.
 
 ## Development
 
@@ -137,8 +137,7 @@ Input → Noise Gate → High-Pass → Low-Pass → Bass Shelf → Treble Shelf 
 
 - **PySide6** — Qt GUI framework
 - **PyAudio** — Audio I/O streaming
-- **NumPy** — Numerical operations
-- **SciPy** — Signal processing and filter design
+- **NumPy** — Signal processing
 
 ## License
 

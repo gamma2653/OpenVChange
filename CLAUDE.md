@@ -29,7 +29,7 @@ poetry run python scripts/benchmark.py
 npm run changeset
 ```
 
-CI and release builds use Python 3.12. The locked NumPy (1.26) has no wheels for Python 3.13, and a source build of it crashes on the GitHub runners. Moving to Python 3.13 there means upgrading to NumPy 2 first.
+CI and release builds use Python 3.12. The locked NumPy (1.26) has no wheels for Python 3.13, so there it is compiled from source, which takes six minutes on the GitHub runners. Moving to Python 3.13 there means upgrading to NumPy 2 first.
 
 ## Testing
 
@@ -50,7 +50,7 @@ Releases are driven by Changesets. `package.json` is the version source of truth
 
 ## Architecture
 
-The codebase has three modules:
+The codebase is split by concern. The window, the audio stream, and the signal processing each have their own module, and the signal processing depends on neither of the others:
 
 **`openvchange/__main__.py`** - GUI layer using PySide6/Qt
 - `MainWindow`: Orchestrates UI components and AudioProcessor
@@ -72,7 +72,13 @@ The codebase has three modules:
 - `EffectsChain`: every effect, working on float32 NumPy arrays
 - Must not import Qt or PyAudio (a test enforces this), so it can be tested and reused on its own
 - `reset()` clears all history when a stream starts; `reset_effect_states()` clears only filter and envelope state and is used by the bypass
-- Stateful filter implementation using `scipy.lfilter` with `lfilter_zi` for continuous processing without clicks/pops
+- Needs NumPy and nothing else. Do not add SciPy back for a function or two: it doubles the size of the executable
+
+**`openvchange/filters.py`** - Second-order filters
+- Designs from the Audio EQ Cookbook: `lowpass`, `highpass` (Butterworth), `bandpass`, `shelf`
+- `Biquad` runs a filter over a stream without a loop over the samples: it splits the feedback into two one-pole stages, each of which is a cumulative sum. See its docstring before changing it
+- The terms of those sums grow as one over the pole magnitude, so long buffers are processed in pieces (`Biquad.piece`). `test_filter_does_not_overflow_on_a_long_buffer` guards this
+- Checked against theory (the Butterworth response from its definition) and against a plain loop in `tests/reference_dsp.py`
 
 **`openvchange/formant.py`** - Formant shifting
 - `FormantShifter` moves the spectral envelope of each frame by a ratio and leaves the harmonics in place, so the pitch does not change. No Qt, no PyAudio

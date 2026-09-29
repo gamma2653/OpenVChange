@@ -10,7 +10,6 @@ python = ">=3.10,<3.15"
 pyaudio = "^0.2.14"
 pyside6 = "^6.6.0"
 numpy = "^1.26.0"
-scipy = "^1.11.0"
 
 [tool.poetry.scripts]
 openvchange = "openvchange.__main__:main"

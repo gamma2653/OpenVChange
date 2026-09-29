@@ -1,15 +1,15 @@
 """Signal processing for OpenVChange.
 
 Everything here works on float32 NumPy arrays and knows nothing about Qt or audio
-devices, so it can be tested and reused on its own.
+devices, so it can be tested and reused on its own. It needs NumPy and nothing else.
 """
 
 import math
 
 import numpy as np
 import numpy.typing as npt
-from scipy import signal
 
+from openvchange import filters
 from openvchange.formant import FormantShifter
 
 
@@ -76,11 +76,9 @@ class EffectsChain:
     def __init__(self, sample_rate: int = 44100) -> None:
         self.sample_rate = sample_rate
 
-        # Filter states (preserved between chunks)
+        # The filters in use, by name, each with the settings it was designed for.
+        # A filter is dropped when it is switched off, so that it starts afresh.
         self.filter_states = {}
-
-        # Filter coefficients, redesigned only when the settings behind them change
-        self._coefficients = {}
 
         # Highest level that reached the soft clipper in the last buffer. At 1.0 and
         # above the signal would have clipped outright without it.
@@ -325,9 +323,8 @@ class EffectsChain:
         if DEESSER_CENTER_HZ >= 0.45 * self.sample_rate:
             return data  # the band does not fit below half the sample rate
 
-        b, a = self.coefficients("deesser_band", "bandpass", DEESSER_CENTER_HZ, DEESSER_Q)
         samples = data.astype(np.float64)
-        band = self.apply_filter_with_state(b, a, samples, "deesser_band")
+        band = self.filtered("deesser_band", samples, filters.bandpass, DEESSER_CENTER_HZ, DEESSER_Q)
 
         # How loud the band is
         envelope, self.deesser_envelope = follow(
@@ -569,79 +566,25 @@ class EffectsChain:
         gains[i:] = gain
         return (samples * gains).astype(data.dtype)
 
-    def make_shelf_filter(self, freq: float, gain_db: float, filter_type: str = "low") -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
-        """Create a shelf filter using biquad coefficients.
+    def filtered(self, name: str, data: npt.NDArray[np.floating], design, freq: float, *params: float) -> npt.NDArray[np.float64]:
+        """Run `data` through the filter called `name`.
 
-        Based on Robert Bristow-Johnson's Audio EQ Cookbook.
-        filter_type: 'low' for low shelf, 'high' for high shelf
+        `design` is one of the functions in `filters`. The filter is designed again
+        only when its settings or the sample rate change, and it keeps its state from
+        buffer to buffer and across a redesign, so neither causes a click.
         """
-        A = 10 ** (gain_db / 40)
-        w0 = 2 * np.pi * freq / self.sample_rate
-        cos_w0 = np.cos(w0)
-        sin_w0 = np.sin(w0)
-        alpha = sin_w0 / 2 * np.sqrt((A + 1/A) * (1/0.7 - 1) + 2)
-
-        if filter_type == "low":
-            b0 = A * ((A + 1) - (A - 1) * cos_w0 + 2 * np.sqrt(A) * alpha)
-            b1 = 2 * A * ((A - 1) - (A + 1) * cos_w0)
-            b2 = A * ((A + 1) - (A - 1) * cos_w0 - 2 * np.sqrt(A) * alpha)
-            a0 = (A + 1) + (A - 1) * cos_w0 + 2 * np.sqrt(A) * alpha
-            a1 = -2 * ((A - 1) + (A + 1) * cos_w0)
-            a2 = (A + 1) + (A - 1) * cos_w0 - 2 * np.sqrt(A) * alpha
-        else:  # high shelf
-            b0 = A * ((A + 1) + (A - 1) * cos_w0 + 2 * np.sqrt(A) * alpha)
-            b1 = -2 * A * ((A - 1) + (A + 1) * cos_w0)
-            b2 = A * ((A + 1) + (A - 1) * cos_w0 - 2 * np.sqrt(A) * alpha)
-            a0 = (A + 1) - (A - 1) * cos_w0 + 2 * np.sqrt(A) * alpha
-            a1 = 2 * ((A - 1) - (A + 1) * cos_w0)
-            a2 = (A + 1) - (A - 1) * cos_w0 - 2 * np.sqrt(A) * alpha
-
-        b = np.array([b0/a0, b1/a0, b2/a0])
-        a = np.array([1, a1/a0, a2/a0])
-        return b, a
-
-    def make_bandpass_filter(self, freq: float, q: float) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
-        """Second-order band-pass with unity gain at its centre frequency.
-
-        From the Audio EQ Cookbook by Robert Bristow-Johnson.
-        """
-        w0 = 2 * np.pi * freq / self.sample_rate
-        alpha = np.sin(w0) / (2 * q)
-        a0 = 1 + alpha
-        b = np.array([alpha / a0, 0.0, -alpha / a0])
-        a = np.array([1.0, -2 * np.cos(w0) / a0, (1 - alpha) / a0])
-        return b, a
-
-    def coefficients(self, name: str, kind: str, *params: float) -> tuple[npt.NDArray[np.floating], npt.NDArray[np.floating]]:
-        """Coefficients for the filter called `name`, designed again only when `params` change.
-
-        kind: 'highpass' or 'lowpass' (Butterworth, frequency as a fraction of Nyquist),
-        'lowshelf' or 'highshelf' (frequency in Hz, gain in dB), or 'bandpass' (centre
-        frequency in Hz, Q).
-        """
-        key = (kind, self.sample_rate, *params)
-        cached = self._coefficients.get(name)
-        if cached is not None and cached[0] == key:
-            return cached[1], cached[2]
-
-        if kind == "lowshelf":
-            b, a = self.make_shelf_filter(params[0], params[1], "low")
-        elif kind == "highshelf":
-            b, a = self.make_shelf_filter(params[0], params[1], "high")
-        elif kind == "bandpass":
-            b, a = self.make_bandpass_filter(params[0], params[1])
+        settings = (design, freq, self.sample_rate, *params)
+        state = self.filter_states.get(name)
+        if state is None:
+            biquad = filters.Biquad(design(freq, self.sample_rate, *params), float(data[0]))
+            self.filter_states[name] = (settings, biquad)
+        elif state[0] != settings:
+            biquad = state[1]
+            biquad.set_coefficients(design(freq, self.sample_rate, *params))
+            self.filter_states[name] = (settings, biquad)
         else:
-            b, a = signal.butter(2, params[0], btype=kind)  # type: ignore[attr-defined]
-
-        self._coefficients[name] = (key, b, a)
-        return b, a
-
-    def apply_filter_with_state(self, b: npt.NDArray[np.floating], a: npt.NDArray[np.floating], data: npt.NDArray[np.float32], filter_key: str) -> npt.NDArray[np.float32]:
-        """Apply filter while preserving state between chunks."""
-        if filter_key not in self.filter_states:
-            self.filter_states[filter_key] = signal.lfilter_zi(b, a) * data[0]
-        data, self.filter_states[filter_key] = signal.lfilter(b, a, data, zi=self.filter_states[filter_key])
-        return data
+            biquad = state[1]
+        return biquad.process(data)
 
     def process(self, data: npt.NDArray[np.float32]) -> npt.NDArray[np.float32]:
         """Run one buffer of samples in [-1, 1] through the chain."""
@@ -653,37 +596,28 @@ class EffectsChain:
 
         # High-pass filter (remove low frequencies)
         if self.high_pass_enabled and self.low_cut > 20:
-            nyquist = self.sample_rate / 2
-            low = self.low_cut / nyquist
-            if low < 1.0:
-                b, a = self.coefficients("highpass", "highpass", low)
-                data = self.apply_filter_with_state(b, a, data, "highpass")
-        elif "highpass" in self.filter_states:
-            del self.filter_states["highpass"]
+            if self.low_cut < self.sample_rate / 2:
+                data = self.filtered("highpass", data, filters.highpass, self.low_cut)
+        else:
+            self.filter_states.pop("highpass", None)
 
         # Low-pass filter (remove high frequencies)
         if self.low_pass_enabled and self.high_cut < (self.sample_rate / 2 - 100):
-            nyquist = self.sample_rate / 2
-            high = self.high_cut / nyquist
-            if high < 1.0:
-                b, a = self.coefficients("lowpass", "lowpass", high)
-                data = self.apply_filter_with_state(b, a, data, "lowpass")
-        elif "lowpass" in self.filter_states:
-            del self.filter_states["lowpass"]
+            data = self.filtered("lowpass", data, filters.lowpass, self.high_cut)
+        else:
+            self.filter_states.pop("lowpass", None)
 
         # Bass shelf filter
         if abs(self.bass_gain) > 0.5:
-            b, a = self.coefficients("bass", "lowshelf", self.bass_freq, self.bass_gain)
-            data = self.apply_filter_with_state(b, a, data, "bass")
-        elif "bass" in self.filter_states:
-            del self.filter_states["bass"]
+            data = self.filtered("bass", data, filters.shelf, self.bass_freq, self.bass_gain, False)
+        else:
+            self.filter_states.pop("bass", None)
 
         # Treble shelf filter
         if abs(self.treble_gain) > 0.5:
-            b, a = self.coefficients("treble", "highshelf", self.treble_freq, self.treble_gain)
-            data = self.apply_filter_with_state(b, a, data, "treble")
-        elif "treble" in self.filter_states:
-            del self.filter_states["treble"]
+            data = self.filtered("treble", data, filters.shelf, self.treble_freq, self.treble_gain, True)
+        else:
+            self.filter_states.pop("treble", None)
 
         # De-esser (before compressor)
         data = self.apply_deesser(data)

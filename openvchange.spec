@@ -12,8 +12,6 @@ import re
 import tomllib
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
-
 block_cipher = None
 
 APP_NAME = "OpenVChange"
@@ -77,11 +75,11 @@ a = Analysis(
     pathex=["."],
     binaries=[],
     datas=[],
-    hiddenimports=collect_submodules("scipy.signal"),
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=qt_excludes + ["tkinter", "matplotlib", "IPython", "pytest"],
+    excludes=qt_excludes + ["tkinter", "matplotlib", "IPython", "pytest", "scipy"],
     noarchive=False,
 )
 
