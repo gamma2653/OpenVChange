@@ -86,6 +86,11 @@ The codebase has three modules:
 - The list in the window is never set directly: `show_matching_builtin_preset()` runs whenever a control changes and shows the preset the controls match, or Custom
 - Tests check that every preset fits the controls and leaves headroom on a voice at a normal level. They cannot check how a preset sounds
 
+**`openvchange/hotkey.py`** - System-wide shortcut (Windows only)
+- `GlobalHotkey` registers one shortcut with `RegisterHotKey` for the GUI thread and hears about presses through a native event filter. No window handle is involved
+- No shortcut is set by default: Ctrl+Alt plus a letter types a character on many keyboard layouts, and any default could clash with another application
+- Tests replace the backend with a fake (`tests/conftest.py`). Presses are tested by posting the real `WM_HOTKEY` message to the thread. Never simulate key presses in a test: they would go to whatever has the focus on the machine running the tests
+
 **`openvchange/settings.py`** - What is remembered between launches
 - Devices (by identity), the device filter, and the effect settings, as `settings.json` in the per-user configuration folder (`%APPDATA%\OpenVChange` on Windows)
 - The effect settings inside it have the same form as a preset and go through the same checks

@@ -4,6 +4,7 @@ import logging
 import sys
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QKeySequenceEdit,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
 from openvchange import presets, settings
 from openvchange.audio import AudioProcessor, AudioStartError
 from openvchange.builtin_presets import BUILT_IN, NEUTRAL, SESSION_DEFAULTS
+from openvchange.hotkey import GlobalHotkey, HotkeyError
 from openvchange.widgets import LevelMeter
 
 logger = logging.getLogger(__name__)
@@ -48,7 +51,11 @@ class MainWindow(QMainWindow):
         self.audio_processor.error_occurred.connect(self.on_audio_error)
         self.effects = self.audio_processor.effects
 
+        # Lets the effects be switched while another application has the focus
+        self.hotkey = GlobalHotkey(parent=self)
+
         self.init_ui()
+        self.hotkey.pressed.connect(self.effects_checkbox.toggle)
         self.watch_preset_controls()
         self.populate_devices()
         self.restore_settings()
@@ -413,6 +420,28 @@ class MainWindow(QMainWindow):
         note_label = QLabel("Note: Changes to these settings take effect when the audio stream is next started.")
         note_label.setWordWrap(True)
         advanced_layout.addWidget(note_label)
+
+        # Shortcut
+        shortcut_group = QGroupBox("Shortcut")
+        shortcut_form = QFormLayout()
+        self.hotkey_edit = QKeySequenceEdit()
+        self.hotkey_edit.setMaximumSequenceLength(1)
+        self.hotkey_edit.setClearButtonEnabled(True)
+        self.hotkey_edit.editingFinished.connect(self.on_hotkey_edited)
+        shortcut_form.addRow("Toggle effects:", self.hotkey_edit)
+        shortcut_group.setLayout(shortcut_form)
+        advanced_layout.addWidget(shortcut_group)
+
+        shortcut_note = QLabel(
+            "Switches the effects on and off from anywhere, also while a game or another "
+            "application has the focus. Click the field and press the keys to use, for "
+            "example Ctrl+Shift+F9."
+            if self.hotkey.supported
+            else "Shortcuts that work in other applications are only available on Windows."
+        )
+        shortcut_note.setWordWrap(True)
+        advanced_layout.addWidget(shortcut_note)
+        self.hotkey_edit.setEnabled(self.hotkey.supported)
 
         advanced_layout.addStretch()
 
@@ -824,6 +853,22 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Status: Stopped")
         self.reset_level_meters()
 
+    def on_hotkey_edited(self):
+        """Use the shortcut that was just entered, or say why it cannot be used."""
+        wanted = self.hotkey_edit.keySequence()
+        if wanted == self.hotkey.sequence:
+            return
+        try:
+            self.hotkey.set_sequence(wanted)
+        except HotkeyError as e:
+            self.status_label.setText(f"Status: {describe_shortcut(wanted)} cannot be used: {e}")
+            self.hotkey_edit.setKeySequence(self.hotkey.sequence)
+            return
+        if wanted.isEmpty():
+            self.status_label.setText("Status: Shortcut removed")
+        else:
+            self.status_label.setText(f"Status: {describe_shortcut(wanted)} now switches the effects")
+
     def restore_settings(self):
         """Bring back the devices and settings from the last session, where possible."""
         try:
@@ -840,6 +885,14 @@ class MainWindow(QMainWindow):
             return
 
         self.show_all_devices_checkbox.setChecked(show_all)
+        shortcut = saved.get("effects_shortcut")
+        if isinstance(shortcut, str) and shortcut:
+            wanted = QKeySequence.fromString(shortcut, QKeySequence.SequenceFormat.PortableText)
+            try:
+                self.hotkey.set_sequence(wanted)
+            except HotkeyError as e:
+                notes.append(f"the shortcut {shortcut} cannot be used: {e}")
+            self.hotkey_edit.setKeySequence(self.hotkey.sequence)
         missing = [
             kind
             for kind, combo in (("input", self.input_combo), ("output", self.output_combo))
@@ -869,6 +922,7 @@ class MainWindow(QMainWindow):
             "input_device": self.input_combo.currentData(DEVICE_IDENTITY_ROLE),
             "output_device": self.output_combo.currentData(DEVICE_IDENTITY_ROLE),
             "show_all_devices": self.show_all_devices_checkbox.isChecked(),
+            "effects_shortcut": self.hotkey.sequence.toString(QKeySequence.SequenceFormat.PortableText),
             "preset": self.get_preset(),
         }
         try:
@@ -887,8 +941,14 @@ class MainWindow(QMainWindow):
         if not self.closed:
             self.closed = True
             self.save_settings()
+        self.hotkey.close()
         self.audio_processor.shut_down()
         event.accept()
+
+
+def describe_shortcut(sequence):
+    """A shortcut as the user would write it."""
+    return sequence.toString(QKeySequence.SequenceFormat.NativeText) or "An empty shortcut"
 
 
 def main():

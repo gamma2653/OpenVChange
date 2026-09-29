@@ -1,4 +1,4 @@
-"""Stand-ins for PyAudio so tests never touch real audio hardware."""
+"""Stand-ins for PyAudio and the system shortcut API, so tests never touch the real ones."""
 
 from __future__ import annotations
 
@@ -142,3 +142,34 @@ class FakePyAudio:
         stream = FakeStream(start_error=type(self).start_error, **kwargs)
         self.streams.append(stream)
         return stream
+
+
+class FakeHotkeyBackend:
+    """Remembers which shortcuts are registered, and refuses those listed in `taken`."""
+
+    taken: ClassVar[set[tuple[int, int]]] = set()
+    instances: ClassVar[list[FakeHotkeyBackend]] = []
+
+    def __init__(self) -> None:
+        self.registered: dict[int, tuple[int, int]] = {}
+        self.calls: list[tuple] = []
+        type(self).instances.append(self)
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.taken = set()
+        cls.instances = []
+
+    def register(self, hotkey_id: int, modifiers: int, key_code: int) -> None:
+        from openvchange.hotkey import HotkeyError
+
+        self.calls.append(("register", modifiers, key_code))
+        assert hotkey_id not in self.registered, "registered twice without unregistering"
+        if (modifiers, key_code) in type(self).taken:
+            raise HotkeyError("another application already uses it")
+        self.registered[hotkey_id] = (modifiers, key_code)
+
+    def unregister(self, hotkey_id: int) -> None:
+        self.calls.append(("unregister",))
+        assert hotkey_id in self.registered, "unregistered something that was not registered"
+        del self.registered[hotkey_id]

@@ -8,8 +8,8 @@ import pyaudio
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from openvchange import settings
-from tests.fakes import FakePyAudio
+from openvchange import hotkey, settings
+from tests.fakes import FakeHotkeyBackend, FakePyAudio
 
 
 @pytest.fixture(autouse=True)
@@ -19,6 +19,15 @@ def fake_pyaudio(monkeypatch):
     monkeypatch.setattr(pyaudio, "PyAudio", FakePyAudio)
     yield FakePyAudio
     FakePyAudio.reset()
+
+
+@pytest.fixture(autouse=True)
+def fake_hotkeys(monkeypatch):
+    """Keep every test from registering shortcuts with the real system."""
+    FakeHotkeyBackend.reset()
+    monkeypatch.setattr(hotkey, "default_backend", FakeHotkeyBackend)
+    yield FakeHotkeyBackend
+    FakeHotkeyBackend.reset()
 
 
 @pytest.fixture(autouse=True)
