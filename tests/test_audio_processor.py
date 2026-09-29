@@ -93,7 +93,7 @@ def test_failed_start_leaves_the_engine_stopped():
 
 def test_callback_processes_audio_while_running():
     p = started_processor()
-    p.set_gain(-6.0)
+    p.effects.set_gain(-6.0)
     pcm = to_pcm(sine(300.0, 0.5, seconds=0.5))
 
     out = b"".join(p.pa.streams[0].feed(pcm[i : i + 1024].tobytes()) for i in range(0, 23 * 1024, 1024))

@@ -61,11 +61,11 @@ def test_bypass_returns_the_input_bytes_untouched():
 def test_bypass_clears_filter_state_so_reenabling_starts_clean():
     p = make_processor(high_pass_enabled=True, high_pass_hz=200.0, bass_db=6.0)
     process(p, voice_like(0.1))
-    assert p.filter_states
+    assert p.effects.filter_states
 
     p.set_effects_enabled(False)
     process(p, voice_like(0.1))
-    assert p.filter_states == {}
+    assert p.effects.filter_states == {}
 
 
 def test_neutral_chain_only_soft_clips():
@@ -97,7 +97,7 @@ def test_gain_change_is_smoothed_rather_than_stepped():
     p = make_processor()
     x = sine(300.0, 0.1, seconds=0.5)
     process(p, x)
-    p.set_gain(12.0)
+    p.effects.set_gain(12.0)
     out = process(p, x)
     settled = np.tanh(0.1 * 10 ** (12 / 20))
     # One millisecond after the change the level has only started to move.
@@ -177,7 +177,7 @@ def test_pitch_shift_moves_a_tone_towards_the_target(semitones):
 
     # The grain-based shifter can only place a pure tone on a grid whose spacing is the
     # rate at which grains start, so allow half of that spacing.
-    grain_rate = SAMPLE_RATE / (p.pitch_window_size / p.pitch_num_voices)
+    grain_rate = SAMPLE_RATE / (p.effects.pitch_window_size / p.effects.pitch_num_voices)
     assert dominant_frequency(tail(out)) == pytest.approx(target, abs=grain_rate / 2)
 
 

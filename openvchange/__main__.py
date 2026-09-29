@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
 
         self.audio_processor = AudioProcessor()
         self.audio_processor.level_changed.connect(self.update_level_meter)
+        self.effects = self.audio_processor.effects
 
         self.init_ui()
         self.populate_devices()
@@ -460,64 +461,64 @@ class MainWindow(QMainWindow):
 
     def on_gain_changed(self, value):
         self.gain_label.setText(f"{value} dB")
-        self.audio_processor.set_gain(value)
+        self.effects.set_gain(value)
 
     def on_bass_changed(self, value):
         self.bass_label.setText(f"{value} dB")
-        self.audio_processor.set_bass(value)
+        self.effects.set_bass(value)
 
     def on_treble_changed(self, value):
         self.treble_label.setText(f"{value} dB")
-        self.audio_processor.set_treble(value)
+        self.effects.set_treble(value)
 
     def on_pitch_changed(self, value):
         semitones = value / 10.0  # Convert from slider units to semitones
         self.pitch_label.setText(f"{semitones:.1f} st")
-        self.audio_processor.set_pitch(semitones)
+        self.effects.set_pitch(semitones)
 
     def on_delay_changed(self, value):
         self.delay_label.setText(f"{value} ms")
-        self.audio_processor.set_delay(value)
+        self.effects.set_delay(value)
 
     def on_hp_toggled(self, checked):
         self.hp_slider.setEnabled(checked)
-        self.audio_processor.high_pass_enabled = checked
+        self.effects.set_high_pass_enabled(checked)
 
     def on_hp_changed(self, value):
         self.hp_label.setText(f"{value} Hz")
-        self.audio_processor.set_low_cut(value)
+        self.effects.set_low_cut(value)
 
     def on_lp_toggled(self, checked):
         self.lp_slider.setEnabled(checked)
-        self.audio_processor.low_pass_enabled = checked
+        self.effects.set_low_pass_enabled(checked)
 
     def on_lp_changed(self, value):
         self.lp_label.setText(f"{value} Hz")
-        self.audio_processor.set_high_cut(value)
+        self.effects.set_high_cut(value)
 
     def on_expander_toggled(self, checked):
         self.expander_threshold_slider.setEnabled(checked)
         self.expander_ratio_slider.setEnabled(checked)
         self.expander_attack_slider.setEnabled(checked)
         self.expander_release_slider.setEnabled(checked)
-        self.audio_processor.expander_enabled = checked
+        self.effects.set_expander_enabled(checked)
 
     def on_expander_threshold_changed(self, value):
         self.expander_threshold_label.setText(f"{value}%")
-        self.audio_processor.set_expander_threshold(value)
+        self.effects.set_expander_threshold(value)
 
     def on_expander_ratio_changed(self, value):
         ratio = value / 10.0
         self.expander_ratio_label.setText(f"{ratio:.1f}:1")
-        self.audio_processor.set_expander_ratio(ratio)
+        self.effects.set_expander_ratio(ratio)
 
     def on_expander_attack_changed(self, value):
         self.expander_attack_label.setText(f"{value} ms")
-        self.audio_processor.set_expander_attack(value)
+        self.effects.set_expander_attack(value)
 
     def on_expander_release_changed(self, value):
         self.expander_release_label.setText(f"{value} ms")
-        self.audio_processor.set_expander_release(value)
+        self.effects.set_expander_release(value)
 
     def on_compressor_toggled(self, checked):
         self.compressor_threshold_slider.setEnabled(checked)
@@ -525,41 +526,41 @@ class MainWindow(QMainWindow):
         self.compressor_attack_slider.setEnabled(checked)
         self.compressor_release_slider.setEnabled(checked)
         self.compressor_makeup_slider.setEnabled(checked)
-        self.audio_processor.compressor_enabled = checked
+        self.effects.set_compressor_enabled(checked)
 
     def on_compressor_threshold_changed(self, value):
         self.compressor_threshold_label.setText(f"{value} dB")
-        self.audio_processor.set_compressor_threshold(value)
+        self.effects.set_compressor_threshold(value)
 
     def on_compressor_ratio_changed(self, value):
         ratio = value / 10.0
         self.compressor_ratio_label.setText(f"{ratio:.1f}:1")
-        self.audio_processor.set_compressor_ratio(ratio)
+        self.effects.set_compressor_ratio(ratio)
 
     def on_compressor_attack_changed(self, value):
         self.compressor_attack_label.setText(f"{value} ms")
-        self.audio_processor.set_compressor_attack(value)
+        self.effects.set_compressor_attack(value)
 
     def on_compressor_release_changed(self, value):
         self.compressor_release_label.setText(f"{value} ms")
-        self.audio_processor.set_compressor_release(value)
+        self.effects.set_compressor_release(value)
 
     def on_compressor_makeup_changed(self, value):
         self.compressor_makeup_label.setText(f"{value} dB")
-        self.audio_processor.set_compressor_makeup(value)
+        self.effects.set_compressor_makeup(value)
 
     def on_deesser_toggled(self, checked):
         self.deesser_threshold_slider.setEnabled(checked)
         self.deesser_reduction_slider.setEnabled(checked)
-        self.audio_processor.deesser_enabled = checked
+        self.effects.set_deesser_enabled(checked)
 
     def on_deesser_threshold_changed(self, value):
         self.deesser_threshold_label.setText(f"{value} dB")
-        self.audio_processor.set_deesser_threshold(value)
+        self.effects.set_deesser_threshold(value)
 
     def on_deesser_reduction_changed(self, value):
         self.deesser_reduction_label.setText(f"{value} dB")
-        self.audio_processor.set_deesser_reduction(value)
+        self.effects.set_deesser_reduction(value)
 
     def on_buffer_size_changed(self, index):
         """Handle buffer size combo box change."""
@@ -569,7 +570,7 @@ class MainWindow(QMainWindow):
 
     def on_pitch_voices_changed(self, value):
         """Handle pitch voices spin box change."""
-        self.audio_processor.set_pitch_num_voices(value)
+        self.effects.set_pitch_num_voices(value)
 
     def on_reset_defaults(self):
         """Reset all filter settings to their default values."""

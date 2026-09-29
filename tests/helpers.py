@@ -1,7 +1,7 @@
 """Helpers for driving the audio engine with synthetic signals.
 
 Settings are given in engine units (dB, Hz, ms, semitones), so tests do not depend on how the
-engine happens to expose them. Only `make_processor` and `prepare` know the engine's API.
+engine happens to expose them. Only `make_processor` knows the engine's API.
 """
 
 from __future__ import annotations
@@ -48,43 +48,34 @@ def make_processor(sample_rate: int = SAMPLE_RATE, **settings: float) -> AudioPr
 
     p = AudioProcessor()
     p.sample_rate = sample_rate
-    p.set_pitch_num_voices(int(s["pitch_voices"]))
-    p.set_gain(s["gain_db"])
-    p.set_bass(s["bass_db"])
-    p.set_treble(s["treble_db"])
-    p.set_pitch(s["pitch_semitones"])
-    p.set_delay(s["delay_ms"])
-    p.high_pass_enabled = bool(s["high_pass_enabled"])
-    p.set_low_cut(s["high_pass_hz"])
-    p.low_pass_enabled = bool(s["low_pass_enabled"])
-    p.set_high_cut(s["low_pass_hz"])
-    p.expander_enabled = bool(s["expander_enabled"])
-    p.set_expander_threshold(s["expander_threshold_percent"])
-    p.set_expander_ratio(s["expander_ratio"])
-    p.set_expander_attack(s["expander_attack_ms"])
-    p.set_expander_release(s["expander_release_ms"])
-    p.compressor_enabled = bool(s["compressor_enabled"])
-    p.set_compressor_threshold(s["compressor_threshold_db"])
-    p.set_compressor_ratio(s["compressor_ratio"])
-    p.set_compressor_attack(s["compressor_attack_ms"])
-    p.set_compressor_release(s["compressor_release_ms"])
-    p.set_compressor_makeup(s["compressor_makeup_db"])
-    p.deesser_enabled = bool(s["deesser_enabled"])
-    p.set_deesser_threshold(s["deesser_threshold_db"])
-    p.set_deesser_reduction(s["deesser_reduction_db"])
-    prepare(p)
+    fx = p.effects
+    fx.set_sample_rate(sample_rate)
+    fx.set_pitch_num_voices(int(s["pitch_voices"]))
+    fx.set_gain(s["gain_db"])
+    fx.set_bass(s["bass_db"])
+    fx.set_treble(s["treble_db"])
+    fx.set_pitch(s["pitch_semitones"])
+    fx.set_delay(s["delay_ms"])
+    fx.set_high_pass_enabled(bool(s["high_pass_enabled"]))
+    fx.set_low_cut(s["high_pass_hz"])
+    fx.set_low_pass_enabled(bool(s["low_pass_enabled"]))
+    fx.set_high_cut(s["low_pass_hz"])
+    fx.set_expander_enabled(bool(s["expander_enabled"]))
+    fx.set_expander_threshold(s["expander_threshold_percent"])
+    fx.set_expander_ratio(s["expander_ratio"])
+    fx.set_expander_attack(s["expander_attack_ms"])
+    fx.set_expander_release(s["expander_release_ms"])
+    fx.set_compressor_enabled(bool(s["compressor_enabled"]))
+    fx.set_compressor_threshold(s["compressor_threshold_db"])
+    fx.set_compressor_ratio(s["compressor_ratio"])
+    fx.set_compressor_attack(s["compressor_attack_ms"])
+    fx.set_compressor_release(s["compressor_release_ms"])
+    fx.set_compressor_makeup(s["compressor_makeup_db"])
+    fx.set_deesser_enabled(bool(s["deesser_enabled"]))
+    fx.set_deesser_threshold(s["deesser_threshold_db"])
+    fx.set_deesser_reduction(s["deesser_reduction_db"])
+    fx.reset()
     return p
-
-
-def prepare(p: AudioProcessor) -> None:
-    """Reset processing state the way start() does, without opening a stream."""
-    p.reset_effect_states()
-    p.delay_buffer = np.zeros(p.delay_buffer_size, dtype=np.float32)
-    p.delay_write_pos = 0
-    p.pitch_buffer = np.zeros(p.pitch_buffer_size, dtype=np.float32)
-    p.pitch_write_pos = p.pitch_buffer_size // 2
-    p.pitch_read_pos = [0.0] * p.pitch_num_voices
-    p.pitch_fade_pos = [i / p.pitch_num_voices for i in range(p.pitch_num_voices)]
 
 
 # --- signals -----------------------------------------------------------------

@@ -82,7 +82,7 @@ def test_device_entries_carry_the_portaudio_index(window):
 
 
 def test_sliders_drive_the_engine(window):
-    engine = window.audio_processor
+    engine = window.audio_processor.effects
 
     window.gain_slider.setValue(6)
     window.bass_slider.setValue(-4)
@@ -105,7 +105,7 @@ def test_sliders_drive_the_engine(window):
 
 
 def test_dynamics_controls_drive_the_engine(window):
-    engine = window.audio_processor
+    engine = window.audio_processor.effects
 
     window.expander_checkbox.setChecked(True)
     window.expander_threshold_slider.setValue(5)
@@ -172,7 +172,7 @@ def test_preset_round_trip(window):
 
 def test_legacy_preset_loads_and_reaches_the_engine(window):
     window.apply_preset(LEGACY_PRESET)
-    engine = window.audio_processor
+    engine = window.audio_processor.effects
 
     assert {k: v for k, v in window.get_preset().items() if k != "effects_enabled"} == LEGACY_PRESET
     assert window.effects_checkbox.isChecked()
@@ -180,7 +180,7 @@ def test_legacy_preset_loads_and_reaches_the_engine(window):
     assert engine.delay_ms == 586
     assert engine.compressor_ratio == pytest.approx(11.4)
     assert engine.deesser_enabled
-    assert engine.chunk_size == 4096
+    assert window.audio_processor.chunk_size == 4096
     assert engine.pitch_num_voices == 6
 
 

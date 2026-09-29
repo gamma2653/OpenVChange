@@ -46,7 +46,7 @@ Releases are driven by Changesets. `package.json` is the version source of truth
 
 ## Architecture
 
-The codebase has two main modules:
+The codebase has three modules:
 
 **`openvchange/__main__.py`** - GUI layer using PySide6/Qt
 - `MainWindow`: Orchestrates UI components and AudioProcessor
@@ -54,10 +54,18 @@ The codebase has two main modules:
 - Filter control sliders/checkboxes for all DSP parameters
 - Real-time level meter visualization
 - Start/Stop/Reset controls
+- Effect parameters are set on `self.effects` (the chain); stream settings on `self.audio_processor`
 
-**`openvchange/audio.py`** - Audio processing engine
+**`openvchange/audio.py`** - Audio streaming
 - `AudioProcessor`: Qt QObject with callback-based PyAudio streaming
 - Full-duplex audio (simultaneous input/output)
+- Converts 16-bit PCM to float and back, emits the level meter signal, and handles the master bypass
+- Owns an `EffectsChain` as `.effects`
+
+**`openvchange/dsp.py`** - Signal processing
+- `EffectsChain`: every effect, working on float32 NumPy arrays
+- Must not import Qt or PyAudio (a test enforces this), so it can be tested and reused on its own
+- `reset()` clears all history when a stream starts; `reset_effect_states()` clears only filter and envelope state and is used by the bypass
 - Stateful filter implementation using `scipy.lfilter` with `lfilter_zi` for continuous processing without clicks/pops
 
 ## Audio Processing Pipeline
