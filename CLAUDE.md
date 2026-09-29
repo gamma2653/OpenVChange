@@ -56,7 +56,7 @@ The codebase has three modules:
 - `MainWindow`: Orchestrates UI components and AudioProcessor
 - Device selection (input/output combo boxes)
 - Filter control sliders/checkboxes for all DSP parameters
-- Real-time level meter visualization
+- Input and output level meters with peak hold and clip lights
 - Start/Stop/Reset controls
 - Effect parameters are set on `self.effects` (the chain); stream settings on `self.audio_processor`
 
@@ -115,7 +115,9 @@ Signal flow (in order):
 - Dynamics processors measure level with a follower (`dsp.follow`), never from single samples: a waveform crosses zero twice per cycle, so per-sample level detection turns down signals that are well above the threshold
 - De-esser: split-band. It subtracts part of a band-passed copy of the signal (`DEESSER_CENTER_HZ`, `DEESSER_Q`), so everything outside the band passes unchanged. The band filter must stay second order: its phase then never turns by more than a quarter cycle, which is what guarantees the subtraction cannot boost
 - Expander: attack is how fast the gate opens, release how fast it closes. Its gain is smoothed in dB and bottoms out at `EXPANDER_FLOOR_DB`
-- Level meter emits Qt signals for thread-safe GUI updates
+- The engine emits `levels_changed` with a `Levels` object about 30 times per second of audio, whatever the buffer size, keeping the highest peak in between. It is emitted from the audio thread; Qt queues it to the GUI thread
+- `LevelMeter` (`widgets.py`) is told how much audio each update covers and keeps time by that, not by the wall clock, so its behaviour can be tested exactly
+- The output clip light means the signal reached the soft clipper at or above full scale (`EffectsChain.peak_before_clipping`). The output itself never reaches full scale, because `tanh` does not
 - PyAudio callback runs in separate thread; use Qt signals to communicate with GUI
 - Buffer size and pitch voice count are stream settings: the engine reads them while processing, so `MainWindow.apply_stream_settings()` only passes them on while the stream is stopped
 - The callback must never raise and must never return the input on failure: for a voice changer, leaking the unprocessed voice is worse than silence. On an error it returns silence and emits `error_occurred`, and the window stops the stream

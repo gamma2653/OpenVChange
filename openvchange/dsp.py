@@ -77,6 +77,10 @@ class EffectsChain:
         # Filter coefficients, redesigned only when the settings behind them change
         self._coefficients = {}
 
+        # Highest level that reached the soft clipper in the last buffer. At 1.0 and
+        # above the signal would have clipped outright without it.
+        self.peak_before_clipping = 0.0
+
         # Filter parameters
         self.low_cut = 80
         self.high_cut = 16000
@@ -656,4 +660,5 @@ class EffectsChain:
         data = self.apply_gain(data)
 
         # Soft clipping using tanh for smoother limiting
+        self.peak_before_clipping = float(np.max(np.abs(data)))
         return np.tanh(data)

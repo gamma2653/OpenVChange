@@ -4,9 +4,11 @@ import numpy as np
 import pyaudio
 import pytest
 
-from openvchange.audio import AudioProcessor, AudioStartError
+from openvchange.audio import AudioProcessor, AudioStartError, Levels
 from tests.fakes import WASAPI, FakePyAudio, device
 from tests.helpers import rms, sine, to_pcm
+
+# --- streams ---------------------------------------------------------------------
 
 MIC = 2
 SPEAKERS = 3
@@ -171,25 +173,109 @@ def test_callback_returns_silence_when_there_is_no_input():
     assert flag == pyaudio.paContinue
 
 
-def test_level_meter_reports_the_input_rms(qapp):
+# --- levels for the meters ---------------------------------------------------
+
+
+def metered(p: AudioProcessor, x: np.ndarray, buffer: int = 1024) -> list[Levels]:
+    """Feed a signal through the engine and collect what it tells the meters."""
+    p.sample_rate = 48000
+    p.effects.set_sample_rate(48000)
+    p.reset_meters()
+    seen = []
+    p.levels_changed.connect(seen.append)
+    pcm = to_pcm(x)
+    for start in range(0, len(pcm) - buffer + 1, buffer):
+        p.apply_filters(pcm[start : start + buffer].tobytes())
+    return seen
+
+
+def test_levels_are_peaks_in_db(qapp):
+    seen = metered(AudioProcessor(), sine(1000.0, 0.5))
+
+    assert seen
+    for levels in seen:
+        assert levels.input_db == pytest.approx(-6.02, abs=0.01)
+        # A neutral chain still passes through the soft clipper.
+        assert levels.output_db == pytest.approx(20 * np.log10(np.tanh(0.5)), abs=0.01)
+        assert not levels.input_clipped
+        assert not levels.output_clipped
+
+
+@pytest.mark.parametrize("buffer", [128, 1024, 4096])
+def test_levels_are_reported_about_thirty_times_per_second_whatever_the_buffer_size(qapp, buffer):
+    seen = metered(AudioProcessor(), sine(1000.0, 0.5, seconds=2.0), buffer)
+
+    whole_buffers = (2 * 48000) // buffer
+    per_update = max(1, -(-1600 // buffer))  # buffers needed to cover a thirtieth of a second
+    assert len(seen) == whole_buffers // per_update
+    assert len(seen) <= 60
+    assert all(levels.seconds == pytest.approx(per_update * buffer / 48000) for levels in seen)
+
+
+def test_a_peak_between_two_reports_is_not_lost(qapp):
+    x = np.zeros(48000)
+    x[300] = 0.8  # one loud sample, early in the first stretch
+    seen = metered(AudioProcessor(), x, buffer=128)
+
+    assert seen[0].input_db == pytest.approx(20 * np.log10(0.8), abs=0.01)
+    assert seen[1].input_db < -100
+
+
+def test_silence_reads_far_below_the_scale(qapp):
+    seen = metered(AudioProcessor(), np.zeros(9600))
+    assert seen[0].input_db == -200.0
+    assert seen[0].output_db == -200.0
+
+
+def test_input_that_reaches_full_scale_is_flagged(qapp):
+    assert metered(AudioProcessor(), sine(1000.0, 1.0))[0].input_clipped
+    assert not metered(AudioProcessor(), sine(1000.0, 0.98))[0].input_clipped
+
+
+def test_output_pushed_past_full_scale_is_flagged(qapp):
     p = AudioProcessor()
-    levels = []
-    p.level_changed.connect(levels.append)
+    p.effects.set_gain(12.0)
+    p.effects.reset()
 
-    p.apply_filters(to_pcm(sine(1000.0, 0.5, seconds=0.1))[:4800].tobytes())
+    loud = metered(p, sine(1000.0, 0.5))[-1]
 
-    assert levels == [pytest.approx(0.5 / np.sqrt(2), rel=0.01)]
+    assert loud.output_clipped
+    assert not loud.input_clipped
+    assert loud.output_db < 0.0  # the soft clipper keeps the output below full scale
 
 
-def test_level_meter_keeps_working_while_effects_are_bypassed(qapp):
+def test_output_just_below_full_scale_is_not_flagged(qapp):
     p = AudioProcessor()
+    p.effects.set_gain(5.0)  # 0.5 becomes 0.89
+    p.effects.reset()
+    assert not metered(p, sine(1000.0, 0.5))[-1].output_clipped
+
+
+def test_bypassed_output_is_metered_as_the_input(qapp):
+    p = AudioProcessor()
+    p.effects.set_gain(30.0)
     p.set_effects_enabled(False)
-    levels = []
-    p.level_changed.connect(levels.append)
 
-    p.apply_filters(to_pcm(sine(1000.0, 0.25, seconds=0.1))[:4800].tobytes())
+    seen = metered(p, sine(1000.0, 0.25))
 
-    assert levels == [pytest.approx(0.25 / np.sqrt(2), rel=0.01)]
+    assert seen[0].output_db == seen[0].input_db == pytest.approx(-12.04, abs=0.01)
+    assert not seen[0].output_clipped
+
+
+def test_meters_start_afresh_with_each_stream(qapp):
+    p = started_processor()
+    seen = []
+    p.levels_changed.connect(seen.append)
+    loud = to_pcm(sine(1000.0, 0.9, seconds=0.02))[:512].tobytes()
+    p.pa.streams[0].feed(loud)  # not enough audio for a report yet
+    assert not seen
+
+    p.start()
+    quiet = to_pcm(sine(1000.0, 0.1, seconds=0.1))
+    for start in range(0, 4096, 1024):
+        p.pa.streams[-1].feed(quiet[start : start + 1024].tobytes())
+
+    assert seen[0].input_db == pytest.approx(-20.0, abs=0.05)
 
 
 # --- failures while running ------------------------------------------------------

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from openvchange import presets, settings
 from openvchange.audio import AudioProcessor, AudioStartError
+from openvchange.widgets import LevelMeter
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(500, 580)
 
         self.audio_processor = AudioProcessor()
-        self.audio_processor.level_changed.connect(self.update_level_meter)
+        self.audio_processor.levels_changed.connect(self.update_level_meters)
         self.audio_processor.error_occurred.connect(self.on_audio_error)
         self.effects = self.audio_processor.effects
 
@@ -196,14 +197,28 @@ class MainWindow(QMainWindow):
         filters_group.setLayout(filters_layout)
         main_layout.addWidget(filters_group)
 
-        # Level meter
-        meter_group = QGroupBox("Input Level")
-        meter_layout = QHBoxLayout()
-        self.level_bar = QSlider(Qt.Orientation.Horizontal)
-        self.level_bar.setRange(0, 100)
-        self.level_bar.setValue(0)
-        self.level_bar.setEnabled(False)
-        meter_layout.addWidget(self.level_bar)
+        # Level meters
+        meter_group = QGroupBox("Levels")
+        meter_layout = QFormLayout()
+        self.input_meter = LevelMeter()
+        self.output_meter = LevelMeter()
+        self.input_level_label = QLabel()
+        self.output_level_label = QLabel()
+        for name, meter, label in (
+            ("Input:", self.input_meter, self.input_level_label),
+            ("Output:", self.output_meter, self.output_level_label),
+        ):
+            label.setMinimumWidth(70)
+            label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            label.setText(meter.readout())
+            row = QHBoxLayout()
+            row.addWidget(meter)
+            row.addWidget(label)
+            meter_layout.addRow(name, row)
+        self.output_meter.setToolTip(
+            "Peak level in dB below full scale. The red light means the output is being "
+            "pushed past full scale and is distorting. Turn the gain down."
+        )
         meter_group.setLayout(meter_layout)
         main_layout.addWidget(meter_group)
 
@@ -750,10 +765,21 @@ class MainWindow(QMainWindow):
         self.status_label.setText(status)
         self.status_label.setToolTip(status)
 
-    def update_level_meter(self, level):
-        """Update the input level meter."""
-        db_level = int(min(100, max(0, (level * 100) * 3)))
-        self.level_bar.setValue(db_level)
+    def update_level_meters(self, levels):
+        """Show new levels from the engine."""
+        self.input_meter.update_level(levels.input_db, levels.input_clipped, levels.seconds)
+        self.output_meter.update_level(levels.output_db, levels.output_clipped, levels.seconds)
+        self.input_level_label.setText(self.input_meter.readout())
+        self.output_level_label.setText(self.output_meter.readout())
+
+    def reset_level_meters(self):
+        """Show silence, as when nothing is running."""
+        for meter, label in (
+            (self.input_meter, self.input_level_label),
+            (self.output_meter, self.output_level_label),
+        ):
+            meter.reset()
+            label.setText(meter.readout())
 
     def on_start(self):
         """Start audio processing."""
@@ -797,7 +823,7 @@ class MainWindow(QMainWindow):
         self.pitch_voices_spin.setEnabled(True)
         self.apply_stream_settings()
         self.status_label.setText("Status: Stopped")
-        self.level_bar.setValue(0)
+        self.reset_level_meters()
 
     def restore_settings(self):
         """Bring back the devices and settings from the last session, where possible."""

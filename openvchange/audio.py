@@ -1,6 +1,7 @@
 """Audio streaming for OpenVChange: devices, the PortAudio stream, and the level meter."""
 
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -33,10 +34,35 @@ class Device:
         return f"{self.host_api}: {self.name}"
 
 
+@dataclass(frozen=True)
+class Levels:
+    """What the meters show for one stretch of audio."""
+
+    input_db: float  # highest input peak, in dB below full scale
+    output_db: float  # highest output peak
+    input_clipped: bool  # the input reached full scale
+    output_clipped: bool  # the output would have exceeded full scale without the soft clipper
+    seconds: float  # how much audio this covers
+
+
+def to_db(level: float) -> float:
+    """A linear level in decibels, with silence at -200 dB."""
+    return 20.0 * math.log10(max(level, 1e-10))
+
+
+# The meters are told about levels this many times per second of audio. More would
+# only keep the GUI busy: small buffers arrive hundreds of times per second.
+METER_UPDATES_PER_SECOND = 30
+
+# A 16-bit input sample at either end of its range.
+INPUT_FULL_SCALE = 32767 / 32768
+
+
 class AudioProcessor(QObject):
     """Routes audio from an input device, through the effects chain, to an output device."""
 
-    level_changed = Signal(float)
+    # Levels for the meters, as a Levels object. Emitted from the audio thread.
+    levels_changed = Signal(object)
 
     # Processing failed while the stream was running. Emitted once per failure, from the
     # audio thread. The stream keeps running but outputs silence until it is restarted.
@@ -60,6 +86,8 @@ class AudioProcessor(QObject):
 
         # Set when processing has failed. Nothing but silence goes out until a restart.
         self.failed = False
+
+        self.reset_meters()
 
         self.pa = pyaudio.PyAudio()
 
@@ -185,21 +213,47 @@ class AudioProcessor(QObject):
         """Run one buffer of 16-bit audio through the effects chain."""
         data = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32)
         data = data / 32768.0  # Normalize to -1.0 to 1.0
-
-        # Calculate input level for meter
-        rms = np.sqrt(np.mean(data**2))
-        self.level_changed.emit(rms)
+        input_peak = float(np.max(np.abs(data))) if len(data) else 0.0
 
         # Master bypass - return input untouched, but drop stale filter state
         # so re-enabling the chain does not click.
         if not self.effects_enabled:
             self.effects.reset_effect_states()
+            self.measure(len(data), input_peak, input_peak, input_peak)
             return audio_data
 
         data = self.effects.process(data)
+        output_peak = float(np.max(np.abs(data))) if len(data) else 0.0
+        self.measure(len(data), input_peak, output_peak, self.effects.peak_before_clipping)
 
         # Convert back to int16
         return (data * 32767).astype(np.int16).tobytes()
+
+    def reset_meters(self) -> None:
+        """Forget the levels gathered so far."""
+        self._metered_samples = 0
+        self._input_peak = 0.0
+        self._output_peak = 0.0
+        self._output_peak_unclipped = 0.0
+
+    def measure(self, samples: int, input_peak: float, output_peak: float, output_peak_unclipped: float) -> None:
+        """Gather levels, and pass them on once enough audio has gone by."""
+        self._metered_samples += samples
+        self._input_peak = max(self._input_peak, input_peak)
+        self._output_peak = max(self._output_peak, output_peak)
+        self._output_peak_unclipped = max(self._output_peak_unclipped, output_peak_unclipped)
+
+        if self._metered_samples * METER_UPDATES_PER_SECOND < self.sample_rate:
+            return
+        levels = Levels(
+            input_db=to_db(self._input_peak),
+            output_db=to_db(self._output_peak),
+            input_clipped=self._input_peak >= INPUT_FULL_SCALE,
+            output_clipped=self._output_peak_unclipped >= 1.0,
+            seconds=self._metered_samples / self.sample_rate,
+        )
+        self.reset_meters()
+        self.levels_changed.emit(levels)
 
     def audio_callback(self, in_data: bytes | None, frame_count: int, time_info: Mapping[str, float], status: int) -> tuple[bytes, int]:
         """Combined callback for full-duplex audio processing."""
@@ -224,6 +278,7 @@ class AudioProcessor(QObject):
 
         self.stop()
         self.failed = False
+        self.reset_meters()
         self.sample_rate = self.find_common_sample_rate()
         self.effects.set_sample_rate(self.sample_rate)
         self.effects.reset()

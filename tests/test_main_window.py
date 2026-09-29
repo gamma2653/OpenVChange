@@ -6,7 +6,9 @@ import pytest
 from PySide6.QtWidgets import QFileDialog
 
 from openvchange.__main__ import MainWindow
+from openvchange.audio import Levels
 from tests.fakes import WASAPI, FakePyAudio, device
+from tests.helpers import sine, to_pcm
 
 
 @pytest.fixture
@@ -518,11 +520,49 @@ def test_processing_failure_stops_the_stream_and_is_shown(window):
     assert not window.stop_button.isEnabled()
 
 
-def test_level_meter_follows_the_engine(window):
-    window.audio_processor.level_changed.emit(0.2)
-    assert window.level_bar.value() == 60
-    window.audio_processor.level_changed.emit(5.0)
-    assert window.level_bar.value() == 100
+def test_meters_follow_the_engine(window):
+    window.audio_processor.levels_changed.emit(
+        Levels(input_db=-12.4, output_db=-3.0, input_clipped=False, output_clipped=True, seconds=0.03)
+    )
+
+    assert window.input_meter.level_db == pytest.approx(-12.4)
+    assert window.output_meter.level_db == pytest.approx(-3.0)
+    assert not window.input_meter.clipped
+    assert window.output_meter.clipped
+    assert window.input_level_label.text() == "-12 dB"
+    assert window.output_level_label.text() == "-3 dB"
+
+
+def test_meters_show_silence_when_nothing_is_running(window):
+    assert window.input_level_label.text() == "< -60 dB"
+    window.on_start()
+    window.audio_processor.levels_changed.emit(
+        Levels(input_db=-5.0, output_db=-1.0, input_clipped=True, output_clipped=True, seconds=0.03)
+    )
+
+    window.on_stop()
+
+    for meter in (window.input_meter, window.output_meter):
+        assert meter.level_db == meter.FLOOR_DB
+        assert meter.peak_db == meter.FLOOR_DB
+        assert not meter.clipped
+    assert window.input_level_label.text() == "< -60 dB"
+    assert window.output_level_label.text() == "< -60 dB"
+
+
+def test_meters_are_driven_by_real_audio(window):
+    window.gain_slider.setValue(20)
+    window.on_start()
+    stream = window.audio_processor.pa.streams[0]
+    pcm = to_pcm(sine(1000.0, 0.5, seconds=0.2))
+
+    for start in range(0, 8 * 1024, 1024):
+        stream.feed(pcm[start : start + 1024].tobytes())
+
+    assert window.input_meter.level_db == pytest.approx(-6.02, abs=0.05)
+    assert not window.input_meter.clipped
+    assert window.output_meter.clipped
+    assert window.input_level_label.text() == "-6 dB"
 
 
 def test_closing_the_window_stops_audio(window):
