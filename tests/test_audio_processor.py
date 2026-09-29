@@ -4,7 +4,7 @@ import numpy as np
 import pyaudio
 import pytest
 
-from openvchange.audio import AudioProcessor
+from openvchange.audio import AudioProcessor, AudioStartError
 from tests.fakes import WASAPI, FakePyAudio, device
 from tests.helpers import rms, sine, to_pcm
 
@@ -43,9 +43,10 @@ def test_start_uses_the_configured_buffer_size():
     assert p.pa.streams[0].kwargs["frames_per_buffer"] == 256
 
 
-def test_start_without_devices_does_nothing():
+def test_start_without_devices_is_refused():
     p = AudioProcessor()
-    p.start()
+    with pytest.raises(AudioStartError, match="Select an input and an output device"):
+        p.start()
     assert not p.running
     assert p.pa.streams == []
 
@@ -84,11 +85,61 @@ def test_stop_before_start_is_harmless():
     AudioProcessor().stop()
 
 
-def test_failed_start_leaves_the_engine_stopped():
+def test_start_reports_why_the_stream_could_not_be_opened():
+    FakePyAudio.open_error = OSError(-9996, "Invalid input device (no default output device)")
+    with pytest.raises(AudioStartError, match=r"^Invalid input device \(no default output device\)$"):
+        started_processor()
+
+
+def test_failed_open_leaves_the_engine_stopped():
     FakePyAudio.open_error = OSError("device unavailable")
-    p = started_processor()
+    p = AudioProcessor()
+    p.set_input_device(MIC)
+    p.set_output_device(SPEAKERS)
+
+    with pytest.raises(AudioStartError, match="device unavailable"):
+        p.start()
+
     assert not p.running
     assert p.stream is None
+
+
+def test_stream_that_opens_but_will_not_start_is_closed():
+    FakePyAudio.start_error = OSError("Unanticipated host error", -9999)
+    p = AudioProcessor()
+    p.set_input_device(MIC)
+    p.set_output_device(SPEAKERS)
+
+    with pytest.raises(AudioStartError, match="Unanticipated host error"):
+        p.start()
+
+    assert not p.running
+    assert p.stream is None
+    assert p.pa.streams[0].closed
+
+
+def test_engine_can_start_after_a_failed_attempt():
+    FakePyAudio.open_error = OSError("device unavailable")
+    p = AudioProcessor()
+    p.set_input_device(MIC)
+    p.set_output_device(SPEAKERS)
+    with pytest.raises(AudioStartError):
+        p.start()
+
+    FakePyAudio.open_error = None
+    p.start()
+
+    assert p.running
+
+
+def test_starting_twice_does_not_leak_the_first_stream():
+    p = started_processor()
+    first = p.pa.streams[0]
+
+    p.start()
+
+    assert first.closed
+    assert p.stream is p.pa.streams[1]
 
 
 def test_callback_processes_audio_while_running():
@@ -139,3 +190,59 @@ def test_level_meter_keeps_working_while_effects_are_bypassed(qapp):
     p.apply_filters(to_pcm(sine(1000.0, 0.25, seconds=0.1))[:4800].tobytes())
 
     assert levels == [pytest.approx(0.25 / np.sqrt(2), rel=0.01)]
+
+
+# --- failures while running ------------------------------------------------------
+
+
+def failing_processor(qapp) -> tuple[AudioProcessor, list[str]]:
+    p = started_processor()
+    errors = []
+    p.error_occurred.connect(errors.append)
+
+    def broken(data):
+        raise RuntimeError("filter blew up")
+
+    p.effects.process = broken
+    return p, errors
+
+
+def test_processing_failure_outputs_silence_not_the_raw_voice(qapp):
+    p, _ = failing_processor(qapp)
+    voice = to_pcm(sine(300.0, 0.5, seconds=0.1))[:1024].tobytes()
+
+    out = p.pa.streams[0].feed(voice)
+
+    assert out == b"\x00" * len(voice)
+
+
+def test_processing_failure_is_reported_once(qapp):
+    p, errors = failing_processor(qapp)
+    voice = to_pcm(sine(300.0, 0.5, seconds=0.1))[:1024].tobytes()
+
+    for _ in range(5):
+        assert p.pa.streams[0].feed(voice) == b"\x00" * len(voice)
+
+    assert errors == ["filter blew up"]
+    assert p.failed
+
+
+def test_restart_clears_a_processing_failure(qapp):
+    p, errors = failing_processor(qapp)
+    voice = to_pcm(sine(300.0, 0.5, seconds=0.1))[:1024].tobytes()
+    p.pa.streams[0].feed(voice)
+    del p.effects.process  # the fault is gone
+
+    p.start()
+    out = p.pa.streams[-1].feed(voice)
+
+    assert not p.failed
+    assert np.frombuffer(out, dtype=np.int16).any()
+    assert len(errors) == 1
+
+
+def test_bypass_still_passes_audio_through_untouched(qapp):
+    p = started_processor()
+    p.set_effects_enabled(False)
+    voice = to_pcm(sine(300.0, 0.5, seconds=0.1))[:1024].tobytes()
+    assert p.pa.streams[0].feed(voice) == voice

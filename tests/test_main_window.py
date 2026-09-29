@@ -266,6 +266,42 @@ def test_start_without_devices_asks_for_them(qapp):
     w.close()
 
 
+def test_failed_start_is_shown_and_leaves_the_window_ready_to_retry(window):
+    FakePyAudio.open_error = OSError(-9996, "Invalid input device (no default output device)")
+
+    window.on_start()
+
+    assert window.status_label.text() == (
+        "Status: Could not start audio: Invalid input device (no default output device)"
+    )
+    assert not window.audio_processor.running
+    assert window.start_button.isEnabled()
+    assert not window.stop_button.isEnabled()
+    assert window.input_combo.isEnabled()
+
+    FakePyAudio.open_error = None
+    window.on_start()
+    assert window.status_label.text() == "Status: Running"
+
+
+def test_processing_failure_stops_the_stream_and_is_shown(window):
+    window.on_start()
+    stream = window.audio_processor.pa.streams[0]
+
+    def broken(data):
+        raise RuntimeError("filter blew up")
+
+    window.audio_processor.effects.process = broken
+    out = stream.feed(b"\x01\x02" * 1024)
+
+    assert out == b"\x00" * 2048
+    assert window.status_label.text() == "Status: Stopped after an audio error: filter blew up"
+    assert not window.audio_processor.running
+    assert stream.closed
+    assert window.start_button.isEnabled()
+    assert not window.stop_button.isEnabled()
+
+
 def test_level_meter_follows_the_engine(window):
     window.audio_processor.level_changed.emit(0.2)
     assert window.level_bar.value() == 60

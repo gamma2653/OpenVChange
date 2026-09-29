@@ -1,5 +1,6 @@
 """Audio streaming for OpenVChange: devices, the PortAudio stream, and the level meter."""
 
+import logging
 from collections.abc import Mapping
 
 import numpy as np
@@ -8,11 +9,21 @@ from PySide6.QtCore import QObject, Signal
 
 from openvchange.dsp import EffectsChain
 
+logger = logging.getLogger(__name__)
+
+
+class AudioStartError(Exception):
+    """The audio stream could not be started. The message is meant to be shown to the user."""
+
 
 class AudioProcessor(QObject):
     """Routes audio from an input device, through the effects chain, to an output device."""
 
     level_changed = Signal(float)
+
+    # Processing failed while the stream was running. Emitted once per failure, from the
+    # audio thread. The stream keeps running but outputs silence until it is restarted.
+    error_occurred = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -29,6 +40,9 @@ class AudioProcessor(QObject):
 
         # Master effects bypass (False = pass input straight to output)
         self.effects_enabled = True
+
+        # Set when processing has failed. Nothing but silence goes out until a restart.
+        self.failed = False
 
         self.pa = pyaudio.PyAudio()
 
@@ -123,25 +137,32 @@ class AudioProcessor(QObject):
 
     def audio_callback(self, in_data: bytes | None, frame_count: int, time_info: Mapping[str, float], status: int) -> tuple[bytes, int]:
         """Combined callback for full-duplex audio processing."""
-        if not self.running or in_data is None:
-            return (b'\x00' * (frame_count * self.channels * 2), pyaudio.paContinue)
+        silence = b"\x00" * (frame_count * self.channels * 2)
+        if not self.running or self.failed or in_data is None:
+            return (silence, pyaudio.paContinue)
 
         try:
             processed = self.apply_filters(in_data)
-            return (processed, pyaudio.paContinue)
-        except Exception:  # noqa: BLE001 - the audio thread must never raise
-            return (in_data, pyaudio.paContinue)
+        except Exception as e:  # the audio thread must never raise
+            # Never fall back to the input: that would send the unprocessed voice out.
+            self.failed = True
+            logger.exception("Audio processing failed")
+            self.error_occurred.emit(describe(e))
+            return (silence, pyaudio.paContinue)
+        return (processed, pyaudio.paContinue)
 
     def start(self) -> None:
-        """Start audio processing."""
+        """Start audio processing. Raises AudioStartError if the stream cannot be started."""
         if self.input_device is None or self.output_device is None:
-            return
+            raise AudioStartError("Select an input and an output device first.")
+
+        self.stop()
+        self.failed = False
+        self.sample_rate = self.find_common_sample_rate()
+        self.effects.set_sample_rate(self.sample_rate)
+        self.effects.reset()
 
         try:
-            self.sample_rate = self.find_common_sample_rate()
-            self.effects.set_sample_rate(self.sample_rate)
-            self.effects.reset()
-
             # Use full-duplex stream for synchronized I/O
             self.stream = self.pa.open(
                 format=pyaudio.paInt16,
@@ -154,19 +175,30 @@ class AudioProcessor(QObject):
                 frames_per_buffer=self.chunk_size,
                 stream_callback=self.audio_callback,
             )
-
             self.running = True
             self.stream.start_stream()
-
-        except Exception as e:  # noqa: BLE001 - PortAudio raises several unrelated types
-            print(f"Audio error: {e}")
-            self.running = False
+        except Exception as e:  # PortAudio raises several unrelated types
+            logger.exception("Could not start the audio stream")
+            self.stop()
+            raise AudioStartError(describe(e)) from e
 
     def stop(self) -> None:
         """Stop audio processing."""
         self.running = False
 
-        if hasattr(self, 'stream') and self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-            self.stream = None
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:  # a stream that failed to start may fail to stop
+                logger.exception("Could not close the audio stream cleanly")
+
+
+def describe(error: BaseException) -> str:
+    """A one-line description of an error, for the status bar."""
+    # PortAudio errors arrive as OSError(code, text) or OSError(text, code).
+    parts = [str(arg) for arg in error.args if isinstance(arg, str) and arg.strip()]
+    text = parts[0] if parts else str(error)
+    text = " ".join(text.split())
+    return text or type(error).__name__

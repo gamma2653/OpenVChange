@@ -38,13 +38,16 @@ DEFAULT_DEVICES = [
 class FakeStream:
     """Records how it was opened and lets a test drive the callback by hand."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, start_error: Exception | None = None, **kwargs: Any) -> None:
         self.kwargs = kwargs
         self.callback = kwargs.get("stream_callback")
+        self.start_error = start_error
         self.started = False
         self.closed = False
 
     def start_stream(self) -> None:
+        if self.start_error is not None:
+            raise self.start_error
         self.started = True
 
     def stop_stream(self) -> None:
@@ -71,6 +74,7 @@ class FakePyAudio:
     devices: ClassVar[list[dict]] = list(DEFAULT_DEVICES)
     host_apis: ClassVar[list[dict]] = list(DEFAULT_HOST_APIS)
     open_error: ClassVar[Exception | None] = None
+    start_error: ClassVar[Exception | None] = None
     instances: ClassVar[list[FakePyAudio]] = []
 
     def __init__(self) -> None:
@@ -85,6 +89,7 @@ class FakePyAudio:
         cls.devices = list(DEFAULT_DEVICES)
         cls.host_apis = list(DEFAULT_HOST_APIS)
         cls.open_error = None
+        cls.start_error = None
         cls.instances = []
 
     def terminate(self) -> None:
@@ -115,6 +120,6 @@ class FakePyAudio:
         error = type(self).open_error
         if error is not None:
             raise error
-        stream = FakeStream(**kwargs)
+        stream = FakeStream(start_error=type(self).start_error, **kwargs)
         self.streams.append(stream)
         return stream

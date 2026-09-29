@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from openvchange.audio import AudioProcessor
+from openvchange.audio import AudioProcessor, AudioStartError
 
 
 class MainWindow(QMainWindow):
@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
 
         self.audio_processor = AudioProcessor()
         self.audio_processor.level_changed.connect(self.update_level_meter)
+        self.audio_processor.error_occurred.connect(self.on_audio_error)
         self.effects = self.audio_processor.effects
 
         self.init_ui()
@@ -755,7 +756,11 @@ class MainWindow(QMainWindow):
 
         self.audio_processor.set_input_device(input_device)
         self.audio_processor.set_output_device(output_device)
-        self.audio_processor.start()
+        try:
+            self.audio_processor.start()
+        except AudioStartError as e:
+            self.status_label.setText(f"Status: Could not start audio: {e}")
+            return
 
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -777,6 +782,11 @@ class MainWindow(QMainWindow):
         self.pitch_voices_spin.setEnabled(True)
         self.status_label.setText("Status: Stopped")
         self.level_bar.setValue(0)
+
+    def on_audio_error(self, message):
+        """Stop after the engine has failed, and say why."""
+        self.on_stop()
+        self.status_label.setText(f"Status: Stopped after an audio error: {message}")
 
     def closeEvent(self, event):
         """Handle window close event."""
