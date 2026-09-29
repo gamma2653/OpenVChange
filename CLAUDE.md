@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenVChange is a virtual audio routing and real-time DSP application written in Python. It captures audio from an input device, applies configurable real-time filters/effects, and routes processed audio to an output device via a PySide6 GUI.
+OpenVChange is a real-time voice changer and audio router for Windows, written in Python. It captures audio from an input device, runs it through a chain of effects, and routes the result to an output device. The GUI is PySide6. It is distributed as a single executable built with PyInstaller.
 
 ## Commands
 
@@ -40,7 +40,8 @@ CI and release builds use Python 3.12. The locked NumPy (1.26) has no wheels for
 - `pyaudio.PyAudio` is replaced by `tests/fakes.py` for every test, so nothing opens a real audio device. Never open a real stream from a test: it would route the microphone to the speakers
 - Effects are tested by feeding synthetic signals through the engine and measuring the result (`tests/helpers.py`). Settings are passed in engine units (dB, Hz, ms, semitones)
 - Output must not depend on the buffer size; `test_output_does_not_depend_on_the_buffer_size` guards that
-- `tests/reference_dsp.py` holds the original sample-by-sample implementations. Optimised code in `dsp.py` must match them exactly (`tests/test_matches_reference.py`), so an optimisation never changes the sound
+- `tests/reference_dsp.py` holds plain sample-by-sample implementations of the delay, the gain, the pitch shifter, the compressor, and a second-order filter. The fast code in `dsp.py` and `filters.py` must match them (`tests/test_matches_reference.py`, `tests/test_filters.py`), so an optimisation never changes the sound. When the behaviour of an effect is changed on purpose, change its reference too, or replace it by tests of the new behaviour
+- Timing tests are loose on purpose (`tests/test_performance.py`): they catch a loop over every sample, not a slow machine
 
 ## Releases
 
@@ -91,6 +92,9 @@ The codebase is split by concern. The window, the audio stream, and the signal p
 - In the chain it runs after the pitch shifter. With `formant_preserve`, the ratio first undoes the pitch shift (`EffectsChain.formant_ratio()`)
 - Tests measure it on synthetic vowels with known formants (`tests/helpers.py`: `buzz`, `vowel`). Measure harmonic levels as band energy, never as a single spectral peak: vibrato can empty the peak
 
+**`openvchange/widgets.py`** - Widgets that Qt does not provide
+- `LevelMeter`: a peak meter on a decibel scale with peak hold and a clip light. Its drawing is tested by rendering it and reading pixels
+
 **`openvchange/presets.py`** - Preset files
 - Reads, checks, and writes presets; no Qt
 - `MainWindow.preset_controls()` maps each preset key to its control and is the single list that saving, loading, and checking all use. A new setting only needs an entry there
@@ -123,29 +127,36 @@ The codebase is split by concern. The window, the audio stream, and the signal p
 
 Signal flow (in order):
 1. Input capture → int16 to float32 normalization
-2. Noise Gate (RMS-based threshold)
+2. Expander/Gate (peak detector, gain smoothed in dB)
 3. High-Pass Filter (Butterworth, 20-500 Hz)
 4. Low-Pass Filter (Butterworth, 1000-20000 Hz)
-5. Bass Shelf Filter (biquad, ±12 dB)
-6. Treble Shelf Filter (biquad, ±12 dB)
-7. Pitch Shift (4-voice delay-line with Hann window crossfade)
-8. Formant Shift (spectral envelope warping, ±12 semitones)
-9. Gain application
-10. Soft clipping → float32 to int16 output
+5. Bass Shelf Filter (250 Hz, slider ±128 dB)
+6. Treble Shelf Filter (4000 Hz, slider ±128 dB)
+7. De-esser (split-band, 5-8 kHz)
+8. Compressor (follower in the dB domain)
+9. Pitch Shift (delay line with Hann-crossfaded voices, ±12 semitones)
+10. Formant Shift (spectral envelope warping, ±12 semitones)
+11. Delay (0-10 s)
+12. Gain (slider ±100 dB, smoothed)
+13. Soft clipping (tanh) → float32 to int16 output
+
+The slider ranges are wider than is useful for most voices, and users have presets that rely on that. Do not narrow them.
 
 ## Technical Specs
 
-- Sample Rate: 44100 Hz
-- Buffer Size: 1024 samples
-- Audio Format: 16-bit PCM
-- Filter Design: 2nd-order Butterworth (HP/LP), biquad shelving (bass/treble)
+- Sample Rate: negotiated at each start. The first of 48000, 44100, 96000, 32000, 22050, 16000 Hz that both devices support
+- Buffer Size: 128 to 4096 samples, 1024 by default
+- Audio Format: 16-bit PCM, mono
+- Filter Design: second-order, from the Audio EQ Cookbook. Butterworth for high-pass and low-pass
+- Processing time: about 1 ms per 1024-sample buffer at 48 kHz with everything on (`scripts/benchmark.py`)
 
 ## Key Implementation Details
 
 - The Main tab's "Enable Effects" checkbox sets `AudioProcessor.effects_enabled`; when off, `apply_filters()` returns the input bytes untouched (after emitting the level meter signal) and calls `reset_effect_states()` so re-enabling starts clean
-- Filter coefficients are cached by `EffectsChain.coefficients()` and redesigned only when the settings behind them, or the sample rate, change
+- `EffectsChain.filtered()` keeps each filter with the settings it was designed for, and designs it again only when those or the sample rate change. A filter that is switched off is dropped, so that it starts afresh
 - The audio callback has one buffer's worth of time per buffer (21 ms at 1024 samples and 48 kHz). Avoid per-sample Python loops over NumPy arrays in `dsp.py`; they are what made the engine miss that budget
-- Pitch shift uses circular buffer with 4 overlapping read pointers and crossfade to reduce artifacts
+- Pitch shift uses a circular buffer with overlapping read pointers (4 by default) and a crossfade between them. Read positions advance by repeated addition; the vectorised code reproduces that with `np.add.accumulate`, cut where a voice wraps or restarts its fade
+- Known limitation: the pitch shifter places a pure tone on a grid whose spacing is the rate at which grains start (94 Hz at 48 kHz with 4 voices), so 220 Hz shifted up an octave comes out at 407 Hz. It also colours the spectrum by a few dB. Fixing this means aligning grains to the waveform, which would change how every existing preset sounds
 - Dynamics processors measure level with a follower (`dsp.follow`), never from single samples: a waveform crosses zero twice per cycle, so per-sample level detection turns down signals that are well above the threshold
 - De-esser: split-band. It subtracts part of a band-passed copy of the signal (`DEESSER_CENTER_HZ`, `DEESSER_Q`), so everything outside the band passes unchanged. The band filter must stay second order: its phase then never turns by more than a quarter cycle, which is what guarantees the subtraction cannot boost
 - Expander: attack is how fast the gate opens, release how fast it closes. Its gain is smoothed in dB and bottoms out at `EXPANDER_FLOOR_DB`
