@@ -2,7 +2,8 @@ name: Release
 
 # On every push to main:
 #   - If there are pending changesets, open or update a "Version OpenVChange"
-#     pull request that bumps the version and writes CHANGELOG.md.
+#     pull request that bumps the version and writes CHANGELOG.md, and run CI
+#     on it.
 #   - If there are none and the current version has no tag yet (which is the
 #     case right after that pull request is merged), build the Windows
 #     executable and publish it as a GitHub release.
@@ -26,6 +27,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      actions: write # to start CI on the version pull request
     outputs:
       release: ${{ steps.plan.outputs.release }}
       version: ${{ steps.plan.outputs.version }}
@@ -56,6 +58,20 @@ jobs:
           # executable has been built.
           create-github-releases: false
           push-git-tags: false
+
+      # GitHub holds workflow runs on a pull request that a workflow opened, until
+      # somebody approves them by hand. A run started through workflow_dispatch is
+      # not held, and its result shows on the pull request all the same, because
+      # checks belong to the commit.
+      - name: Run CI on the version pull request
+        if: steps.changesets.outputs.has-changesets == 'true' && steps.changesets.outputs.pr-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.changesets.outputs.pr-number }}
+        run: |
+          branch=$(gh pr view "$PR_NUMBER" --json headRefName --jq .headRefName)
+          echo "Starting CI on $branch for pull request #$PR_NUMBER"
+          gh workflow run ci.yml --ref "$branch"
 
       - name: Decide whether to release
         id: plan

@@ -52,6 +52,7 @@ Releases are driven by Changesets. `package.json` is the version source of truth
 - The executable is not code-signed. That needs a certificate, which the project does not have
 - `.github/workflows/release.yml` opens a "Version OpenVChange" pull request while changesets are pending, then builds the exe and publishes a GitHub release tagged `v<version>` once that pull request is merged
 - `changeset init` and `changeset add` are interactive; write changeset files directly when working non-interactively
+- The version pull request is opened with the token of the workflow. GitHub holds the workflow runs of such a pull request until somebody approves them, so the release workflow starts CI on it through `workflow_dispatch`, which is never held. The held run still shows on the pull request as awaiting approval and can be ignored
 
 ## Architecture
 

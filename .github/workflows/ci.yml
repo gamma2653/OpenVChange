@@ -2,11 +2,17 @@ name: CI
 
 # Lint and test every pull request, and main after each merge. Pull requests in a
 # stack trigger this as if they targeted main, so every layer is checked.
+#
+# The version pull request is the exception. The release workflow opens it with
+# the token of the workflow, and GitHub holds the runs of such a pull request
+# until somebody approves them by hand. The release workflow therefore starts this
+# workflow itself, through workflow_dispatch, which is never held.
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}

@@ -143,7 +143,7 @@ npm run changeset    # describe a change and pick patch, minor, or major
 
 Commit the generated file in `.changeset/` along with your change. After that, releases are automatic:
 
-1. Pushing to `main` with pending changesets opens or updates a **Version OpenVChange** pull request. It bumps the version everywhere it appears and writes `CHANGELOG.md`.
+1. Pushing to `main` with pending changesets opens or updates a **Version OpenVChange** pull request. It bumps the version everywhere it appears and writes `CHANGELOG.md`. The lint and the tests run on it as on any other pull request.
 2. Merging that pull request builds the Windows executable and publishes a GitHub release tagged `v<version>`, with the executable attached and the changelog entry as release notes.
 
 Versions below 1.0.0 are published as pre-releases. The workflow lives in `.github/workflows/release.yml`.
