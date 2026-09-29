@@ -158,6 +158,31 @@ class MainWindow(QMainWindow):
         pitch_layout.addWidget(self.pitch_label)
         filters_layout.addLayout(pitch_layout)
 
+        # Formant control
+        formant_layout = QHBoxLayout()
+        formant_layout.addWidget(QLabel("Formant:"))
+        self.formant_slider = QSlider(Qt.Orientation.Horizontal)
+        self.formant_slider.setRange(-120, 120)  # -12 to +12 semitones (x10 for precision)
+        self.formant_slider.setValue(0)
+        self.formant_slider.setToolTip(
+            "Moves the resonances of the voice without changing its pitch. Down sounds like "
+            "a larger person, up like a smaller one. Adds about 20 ms of delay while in use."
+        )
+        self.formant_slider.valueChanged.connect(self.on_formant_changed)
+        formant_layout.addWidget(self.formant_slider)
+        self.formant_label = QLabel("0.0 st")
+        self.formant_label.setMinimumWidth(70)
+        formant_layout.addWidget(self.formant_label)
+        filters_layout.addLayout(formant_layout)
+
+        self.formant_preserve_checkbox = QCheckBox("Keep formants when shifting pitch")
+        self.formant_preserve_checkbox.setToolTip(
+            "Shifting the pitch also shifts the resonances of the voice, which is what makes "
+            "it sound like a tape played at the wrong speed. This moves them back."
+        )
+        self.formant_preserve_checkbox.toggled.connect(self.on_formant_preserve_toggled)
+        filters_layout.addWidget(self.formant_preserve_checkbox)
+
         # Delay control
         delay_layout = QHBoxLayout()
         delay_layout.addWidget(QLabel("Delay:"))
@@ -539,6 +564,14 @@ class MainWindow(QMainWindow):
         self.pitch_label.setText(f"{semitones:.1f} st")
         self.effects.set_pitch(semitones)
 
+    def on_formant_changed(self, value):
+        semitones = value / 10.0  # Convert from slider units to semitones
+        self.formant_label.setText(f"{semitones:.1f} st")
+        self.effects.set_formant(semitones)
+
+    def on_formant_preserve_toggled(self, checked):
+        self.effects.set_formant_preserve(checked)
+
     def on_delay_changed(self, value):
         self.delay_label.setText(f"{value} ms")
         self.effects.set_delay(value)
@@ -688,6 +721,8 @@ class MainWindow(QMainWindow):
             "bass": self.bass_slider,
             "treble": self.treble_slider,
             "pitch": self.pitch_slider,
+            "formant": self.formant_slider,
+            "formant_preserve": self.formant_preserve_checkbox,
             "delay": self.delay_slider,
             "high_pass_enabled": self.hp_checkbox,
             "high_pass_freq": self.hp_slider,

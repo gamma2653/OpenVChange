@@ -276,7 +276,7 @@ def test_legacy_preset_loads_and_reaches_the_engine(window):
     window.apply_preset(LEGACY_PRESET)
     engine = window.audio_processor.effects
 
-    assert {k: v for k, v in window.get_preset().items() if k != "effects_enabled"} == LEGACY_PRESET
+    assert {k: v for k, v in window.get_preset().items() if k in LEGACY_PRESET} == LEGACY_PRESET
     assert window.effects_checkbox.isChecked()
     assert engine.pitch_semitones == pytest.approx(-2.3)
     assert engine.delay_ms == 586

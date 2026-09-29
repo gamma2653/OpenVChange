@@ -1,7 +1,8 @@
 """Presets that come with the app.
 
-Values are in the units of the controls, exactly as in a preset file: pitch in tenths
-of a semitone, ratios in tenths, everything else in the unit its slider shows.
+Values are in the units of the controls, exactly as in a preset file: pitch and
+formant in tenths of a semitone, ratios in tenths, everything else in the unit its
+slider shows.
 
 A built-in preset sets every effect, so choosing one after another never leaves
 something behind from the first. It does not touch the master switch, the buffer size,
@@ -19,6 +20,8 @@ NEUTRAL = {
     "bass": 0,
     "treble": 0,
     "pitch": 0,
+    "formant": 0,
+    "formant_preserve": False,
     "delay": 0,
     "high_pass_enabled": False,
     "high_pass_freq": 80,
@@ -114,6 +117,9 @@ BUILT_IN: dict[str, dict[str, int | bool]] = {
     "Deep voice": preset(
         gain=3,
         pitch=-40,
+        # A deeper voice, not a slowed-down one: formants only a little lower.
+        formant=-15,
+        formant_preserve=True,
         bass=4,
         high_pass_enabled=True,
         high_pass_freq=60,
@@ -125,6 +131,8 @@ BUILT_IN: dict[str, dict[str, int | bool]] = {
     "Giant": preset(
         gain=5,
         pitch=-80,
+        formant=-40,
+        formant_preserve=True,
         bass=6,
         treble=-3,
         low_pass_enabled=True,
@@ -137,11 +145,14 @@ BUILT_IN: dict[str, dict[str, int | bool]] = {
     "Higher voice": preset(
         gain=6,
         pitch=40,
+        formant=15,
+        formant_preserve=True,
         bass=-2,
         treble=2,
         high_pass_enabled=True,
         high_pass_freq=120,
     ),
+    # Formants follow the pitch here, as on a record played too fast.
     "Chipmunk": preset(
         gain=4,
         pitch=90,

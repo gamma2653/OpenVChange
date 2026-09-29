@@ -28,6 +28,8 @@ EVERYTHING = {
     "bass_db": 6.0,
     "treble_db": -4.0,
     "pitch_semitones": 4.0,
+    "formant_semitones": -2.0,
+    "formant_preserve": True,
     "delay_ms": 50.0,
     "high_pass_enabled": True,
     "high_pass_hz": 120.0,

@@ -10,6 +10,8 @@ import numpy as np
 import numpy.typing as npt
 from scipy import signal
 
+from openvchange.formant import FormantShifter
+
 
 def follow(
     levels: list[float], state: float, rising: float, falling: float
@@ -53,6 +55,9 @@ DEESSER_Q = DEESSER_CENTER_HZ / (8000.0 - 5000.0)
 DEESSER_ATTACK_MS = 1.0
 DEESSER_RELEASE_MS = 50.0
 
+# Formant shifts smaller than this, about a twentieth of a semitone, are skipped.
+FORMANT_RATIO_MIN = 0.003
+
 # Gain of a fully closed gate. Low enough to be inaudible, and finite so that the
 # gate takes the same time to open however long it has been closed.
 EXPANDER_FLOOR_DB = -80.0
@@ -62,7 +67,7 @@ class EffectsChain:
     """The effects, in the order the signal passes through them.
 
     Expander, high-pass, low-pass, bass shelf, treble shelf, de-esser, compressor,
-    pitch shift, delay, gain, soft clip.
+    pitch shift, formant shift, delay, gain, soft clip.
 
     State is carried between calls to `process`, so audio can be fed in buffers of any
     size without clicks.
@@ -139,7 +144,16 @@ class EffectsChain:
         self.pitch_read_pos = [0.0] * self.pitch_num_voices
         self.pitch_fade_pos = [i / self.pitch_num_voices for i in range(self.pitch_num_voices)]
 
+        # Formants (in semitones). At 0 they are left where the pitch shifter puts
+        # them, which is shifted along with the pitch. With `formant_preserve` they
+        # are first moved back to where they were in the original voice.
+        self.formant_semitones = 0.0
+        self.formant_preserve = False
+        self.formant_shifter = FormantShifter(sample_rate)
+
     def set_sample_rate(self, sample_rate: int) -> None:
+        if sample_rate != self.sample_rate:
+            self.formant_shifter = FormantShifter(sample_rate)
         self.sample_rate = sample_rate
 
     def reset(self) -> None:
@@ -155,6 +169,7 @@ class EffectsChain:
     def reset_effect_states(self) -> None:
         """Clear filter/envelope state so the chain restarts cleanly."""
         self.filter_states = {}
+        self.formant_shifter.reset()
         self.expander_level = 0.0
         self.expander_gain_db = 0.0
         self.compressor_envelope_db = -60.0
@@ -200,6 +215,22 @@ class EffectsChain:
     def set_delay(self, ms: float) -> None:
         """Set delay in milliseconds (0 to 10000)."""
         self.delay_ms = ms
+
+    def set_formant(self, semitones: float) -> None:
+        """Set formant shift in semitones (-12 to +12)."""
+        self.formant_semitones = semitones
+
+    def set_formant_preserve(self, enabled: bool) -> None:
+        """Keep the formants of the original voice when the pitch is shifted."""
+        self.formant_preserve = enabled
+
+    def formant_ratio(self) -> float:
+        """How far the formant shifter has to move the formants it is given."""
+        semitones = self.formant_semitones
+        if self.formant_preserve and abs(self.pitch_semitones) >= 0.1:
+            # Undo what the pitch shifter did to them.
+            semitones -= self.pitch_semitones
+        return 2 ** (semitones / 12.0)
 
     def set_pitch(self, semitones: float) -> None:
         """Set pitch shift in semitones (-12 to +12)."""
@@ -470,6 +501,18 @@ class EffectsChain:
         self.pitch_fade_pos[v] = fade_pos
         return positions, fades
 
+    def apply_formant_shift(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.floating]:
+        """Move the formants, unless they are to stay where they are.
+
+        While it is in use this adds `formant_shifter.latency` samples of delay.
+        """
+        ratio = self.formant_ratio()
+        if abs(ratio - 1.0) < FORMANT_RATIO_MIN:
+            if self.formant_shifter.active:
+                self.formant_shifter.reset()
+            return data
+        return self.formant_shifter.process(data, ratio)
+
     def apply_delay(self, data: npt.NDArray[np.floating]) -> npt.NDArray[np.float32]:
         """Delay the signal through a circular buffer."""
         size = self.delay_buffer_size
@@ -651,6 +694,9 @@ class EffectsChain:
         # Apply pitch shift
         if abs(self.pitch_semitones) >= 0.1:
             data = self.apply_pitch_shift(data)
+
+        # Apply formant shift
+        data = self.apply_formant_shift(data)
 
         # Apply delay
         if self.delay_ms > 0:

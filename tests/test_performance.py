@@ -23,6 +23,8 @@ def everything_on(voices: int) -> EffectsChain:
     chain.set_bass(6.0)
     chain.set_treble(3.0)
     chain.set_pitch(4.0)
+    chain.set_formant(-2.0)
+    chain.set_formant_preserve(True)
     chain.set_delay(50.0)
     chain.set_high_pass_enabled(True)
     chain.set_low_pass_enabled(True)

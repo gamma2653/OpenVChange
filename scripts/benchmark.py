@@ -40,6 +40,8 @@ def everything(chain: EffectsChain) -> None:
     dynamics(chain)
     filters(chain)
     chain.set_pitch(4.0)
+    chain.set_formant(-2.0)
+    chain.set_formant_preserve(True)
     chain.set_delay(50.0)
     chain.set_gain(3.0)
 
@@ -56,6 +58,7 @@ SCENARIOS = {
     "expander, compressor, de-esser": dynamics,
     "pitch shift, 4 voices": lambda chain: chain.set_pitch(4.0),
     "pitch shift, 8 voices": eight_voices,
+    "formant shift": lambda chain: chain.set_formant(3.0),
     "everything on": everything,
 }
 

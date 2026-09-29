@@ -74,6 +74,13 @@ The codebase has three modules:
 - `reset()` clears all history when a stream starts; `reset_effect_states()` clears only filter and envelope state and is used by the bypass
 - Stateful filter implementation using `scipy.lfilter` with `lfilter_zi` for continuous processing without clicks/pops
 
+**`openvchange/formant.py`** - Formant shifting
+- `FormantShifter` moves the spectral envelope of each frame by a ratio and leaves the harmonics in place, so the pitch does not change. No Qt, no PyAudio
+- Works on overlapping frames of about 21 ms and adds one frame of delay. It is skipped, with no delay, while the formants are to stay where they are
+- The envelope comes from the cepstrum. How much of the cepstrum counts as envelope is set per frame from the detected pitch, so that the harmonics themselves are never moved
+- In the chain it runs after the pitch shifter. With `formant_preserve`, the ratio first undoes the pitch shift (`EffectsChain.formant_ratio()`)
+- Tests measure it on synthetic vowels with known formants (`tests/helpers.py`: `buzz`, `vowel`). Measure harmonic levels as band energy, never as a single spectral peak: vibrato can empty the peak
+
 **`openvchange/presets.py`** - Preset files
 - Reads, checks, and writes presets; no Qt
 - `MainWindow.preset_controls()` maps each preset key to its control and is the single list that saving, loading, and checking all use. A new setting only needs an entry there
@@ -107,8 +114,9 @@ Signal flow (in order):
 5. Bass Shelf Filter (biquad, ±12 dB)
 6. Treble Shelf Filter (biquad, ±12 dB)
 7. Pitch Shift (4-voice delay-line with Hann window crossfade)
-8. Gain application (-20 to +20 dB)
-9. Soft clipping → float32 to int16 output
+8. Formant Shift (spectral envelope warping, ±12 semitones)
+9. Gain application
+10. Soft clipping → float32 to int16 output
 
 ## Technical Specs
 

@@ -18,6 +18,8 @@ DEFAULTS = {
     "treble_db": 0.0,
     "pitch_semitones": 0.0,
     "pitch_voices": 4,
+    "formant_semitones": 0.0,
+    "formant_preserve": False,
     "delay_ms": 0.0,
     "high_pass_enabled": False,
     "high_pass_hz": 80.0,
@@ -55,6 +57,8 @@ def make_processor(sample_rate: int = SAMPLE_RATE, **settings: float) -> AudioPr
     fx.set_bass(s["bass_db"])
     fx.set_treble(s["treble_db"])
     fx.set_pitch(s["pitch_semitones"])
+    fx.set_formant(s["formant_semitones"])
+    fx.set_formant_preserve(bool(s["formant_preserve"]))
     fx.set_delay(s["delay_ms"])
     fx.set_high_pass_enabled(bool(s["high_pass_enabled"]))
     fx.set_low_cut(s["high_pass_hz"])
@@ -175,3 +179,77 @@ def distortion_percent(x: np.ndarray, freq: float, sample_rate: int = SAMPLE_RAT
     k = round(cycles)
     harmonics = [spectrum[k * m] for m in range(2, 11) if k * m < len(spectrum)]
     return 100.0 * float(np.sqrt(np.sum(np.square(harmonics))) / spectrum[k])
+
+
+# --- synthetic vowels --------------------------------------------------------
+
+# Centre frequency and bandwidth of each resonance, roughly an "ah".
+VOWEL_FORMANTS = ((700.0, 110.0), (1200.0, 120.0), (2600.0, 160.0), (3500.0, 200.0))
+
+
+def resonate(x: np.ndarray, freq: float, bandwidth: float, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    """A two-pole resonance with unity gain at its centre."""
+    r = np.exp(-np.pi * bandwidth / sample_rate)
+    theta = 2 * np.pi * freq / sample_rate
+    a1, a2 = -2 * r * np.cos(theta), r * r
+    out = []
+    y1 = y2 = 0.0
+    for value in x.tolist():
+        y0 = value - a1 * y1 - a2 * y2
+        out.append(y0)
+        y2, y1 = y1, y0
+    at_centre = np.exp(1j * theta)
+    return np.array(out) / abs(1 / (1 + a1 / at_centre + a2 / at_centre**2))
+
+
+def buzz(pitch: float, seconds: float = 1.5, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    """The sound of vocal cords alone: every harmonic of the pitch, with slight vibrato."""
+    t = np.arange(int(seconds * sample_rate)) / sample_rate
+    phase = 2 * np.pi * np.cumsum(pitch * (1 + 0.01 * np.sin(2 * np.pi * 5 * t))) / sample_rate
+    return sum(np.sin(k * phase + k) / k**0.7 for k in range(1, int(sample_rate / 2.2 / pitch)))
+
+
+def vowel(source: np.ndarray, formant_ratio: float = 1.0, peak: float = 0.3) -> np.ndarray:
+    """`source` shaped by the resonances of a vowel, optionally moved by a ratio."""
+    shaped = sum(resonate(source, f * formant_ratio, b * formant_ratio) for f, b in VOWEL_FORMANTS)
+    return (peak * shaped / np.max(np.abs(shaped))).astype(np.float32)
+
+
+def harmonic_levels_db(x: np.ndarray, pitch: float, up_to: float = 4500.0) -> np.ndarray:
+    """Level of each harmonic of `pitch`, measured on the last two thirds of the signal.
+
+    Each level is the energy in a band around the harmonic, not the height of one peak.
+    Vibrato spreads a harmonic over several peaks, and can empty the middle one.
+    """
+    settled = np.asarray(x, dtype=np.float64)[len(x) // 3 :]
+    power = np.abs(np.fft.rfft(settled * np.hanning(len(settled)))) ** 2
+    hz_per_bin = SAMPLE_RATE / len(settled)
+    half_band = round(0.25 * pitch / hz_per_bin)
+    levels = []
+    k = 1
+    while k * pitch < up_to:
+        centre = round(k * pitch / hz_per_bin)
+        levels.append(power[centre - half_band : centre + half_band + 1].sum())
+        k += 1
+    return 10 * np.log10(np.array(levels) + 1e-20)
+
+
+def shape_difference_db(a: np.ndarray, b: np.ndarray) -> float:
+    """How differently two sets of levels are shaped, whatever their overall level."""
+    difference = a - b
+    return float(np.sqrt(np.mean((difference - np.mean(difference)) ** 2)))
+
+
+def outline_db(x: np.ndarray, low: float = 300.0, high: float = 4500.0, width: float = 300.0) -> np.ndarray:
+    """The long-term spectrum smoothed over `width` Hz: its outline without the pitch.
+
+    Read every 50 Hz from `low` to `high`, so outlines of signals of different lengths
+    can be compared.
+    """
+    settled = np.asarray(x, dtype=np.float64)[len(x) // 3 :]
+    power = np.abs(np.fft.rfft(settled * np.hanning(len(settled)))) ** 2
+    hz_per_bin = SAMPLE_RATE / len(settled)
+    span = max(1, round(width / hz_per_bin))
+    smooth = np.convolve(power, np.ones(span) / span, mode="same")
+    wanted = np.arange(low, high, 50.0)
+    return 10 * np.log10(np.interp(wanted, np.arange(len(smooth)) * hz_per_bin, smooth) + 1e-20)
