@@ -18,11 +18,20 @@ poetry run openvchange
 # Build a standalone one-file Windows executable (output: dist/OpenVChange-<version>.exe)
 poetry run pyinstaller openvchange.spec
 
+# Lint and test (both run in CI on every pull request)
+poetry run ruff check .
+poetry run pytest
+
 # Record a user-facing change for the next release (needs Node 22.11+)
 npm run changeset
 ```
 
-Note: No test framework or linting tools are currently configured.
+## Testing
+
+- Tests live in `tests/` and run headless; `tests/conftest.py` selects Qt's offscreen platform
+- `pyaudio.PyAudio` is replaced by `tests/fakes.py` for every test, so nothing opens a real audio device. Never open a real stream from a test: it would route the microphone to the speakers
+- Effects are tested by feeding synthetic signals through the engine and measuring the result (`tests/helpers.py`). Settings are passed in engine units (dB, Hz, ms, semitones)
+- Output must not depend on the buffer size; `test_output_does_not_depend_on_the_buffer_size` guards that
 
 ## Releases
 

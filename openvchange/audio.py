@@ -1,12 +1,12 @@
 """Audio processing module for OpenVChange."""
 
-from typing import Optional, Mapping
+from collections.abc import Mapping
 
 import numpy as np
 import numpy.typing as npt
 import pyaudio
-from scipy import signal
 from PySide6.QtCore import QObject, Signal
+from scipy import signal
 
 
 class AudioProcessor(QObject):
@@ -14,7 +14,7 @@ class AudioProcessor(QObject):
 
     level_changed = Signal(float)
 
-    def __init__(self, parent: Optional[QObject] = None) -> None:
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.running = False
         self.input_device = None
@@ -556,7 +556,7 @@ class AudioProcessor(QObject):
         # Convert back to int16
         return (data * 32767).astype(np.int16).tobytes()
 
-    def audio_callback(self, in_data: Optional[bytes], frame_count: int, time_info: Mapping[str, float], status: int) -> tuple[bytes, int]:
+    def audio_callback(self, in_data: bytes | None, frame_count: int, time_info: Mapping[str, float], status: int) -> tuple[bytes, int]:
         """Combined callback for full-duplex audio processing."""
         if not self.running or in_data is None:
             return (b'\x00' * (frame_count * self.channels * 2), pyaudio.paContinue)
@@ -564,7 +564,7 @@ class AudioProcessor(QObject):
         try:
             processed = self.apply_filters(in_data)
             return (processed, pyaudio.paContinue)
-        except Exception:
+        except Exception:  # noqa: BLE001 - the audio thread must never raise
             return (in_data, pyaudio.paContinue)
 
     def start(self) -> None:
@@ -598,7 +598,7 @@ class AudioProcessor(QObject):
             self.running = True
             self.stream.start_stream()
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - PortAudio raises several unrelated types
             print(f"Audio error: {e}")
             self.running = False
 

@@ -101,6 +101,11 @@ jobs:
       - name: Check versions are in step
         run: node scripts/sync-version.mjs --check
 
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: poetry run pytest
+
       - name: Build executable
         run: poetry run pyinstaller --noconfirm openvchange.spec
 

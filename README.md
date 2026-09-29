@@ -90,6 +90,16 @@ poetry run pyinstaller openvchange.spec
 
 The result is a single self-contained `dist/OpenVChange-<version>.exe`, where the version comes from `pyproject.toml`. The spec file trims unused Qt modules, so the build is roughly 65 MB. Because it is a one-file build, the exe unpacks itself to a temp directory on launch, so the first window takes a few seconds to appear.
 
+## Development
+
+```bash
+poetry install --with dev
+poetry run ruff check .   # lint
+poetry run pytest         # test
+```
+
+The tests run without a display and never open a real audio device, so they are safe to run anywhere. Both commands run in CI on every pull request.
+
 ## Releasing
 
 Versions and the changelog are managed with [Changesets](https://changesets.dev). This needs Node 22.11 or newer, used only for release tooling.

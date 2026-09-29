@@ -7,20 +7,20 @@ import pyaudio
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QGroupBox,
-    QComboBox,
-    QLabel,
-    QSlider,
-    QPushButton,
     QCheckBox,
-    QFormLayout,
-    QTabWidget,
-    QSpinBox,
+    QComboBox,
     QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QSlider,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from openvchange.audio import AudioProcessor
@@ -722,7 +722,7 @@ class MainWindow(QMainWindow):
         if path:
             with open(path, "w") as f:
                 json.dump(self.get_preset(), f, indent=2)
-            self.status_label.setText(f"Status: Preset saved")
+            self.status_label.setText("Status: Preset saved")
 
     def on_load_preset(self):
         """Load settings from a JSON file."""
@@ -734,9 +734,9 @@ class MainWindow(QMainWindow):
                 with open(path, "r") as f:
                     preset = json.load(f)
                 self.apply_preset(preset)
-                self.status_label.setText(f"Status: Preset loaded")
-            except (json.JSONDecodeError, OSError) as e:
-                self.status_label.setText(f"Status: Failed to load preset")
+                self.status_label.setText("Status: Preset loaded")
+            except (json.JSONDecodeError, OSError):
+                self.status_label.setText("Status: Failed to load preset")
 
     def update_level_meter(self, level):
         """Update the input level meter."""
