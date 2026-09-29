@@ -26,6 +26,8 @@ poetry run pytest
 npm run changeset
 ```
 
+CI and release builds use Python 3.12. The locked NumPy (1.26) has no wheels for Python 3.13, and a source build of it crashes on the GitHub runners. Moving to Python 3.13 there means upgrading to NumPy 2 first.
+
 ## Testing
 
 - Tests live in `tests/` and run headless; `tests/conftest.py` selects Qt's offscreen platform
