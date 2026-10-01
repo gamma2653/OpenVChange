@@ -247,14 +247,14 @@ def test_entering_a_shortcut_registers_it(window):
 
 def test_pressing_the_shortcut_switches_the_effects(window):
     enter(window, "Ctrl+Shift+F9")
-    assert window.audio_processor.effects_enabled
+    assert window.audio_processor.routes[0].effects_enabled
 
     window.hotkey.pressed.emit()
-    assert not window.audio_processor.effects_enabled
+    assert not window.audio_processor.routes[0].effects_enabled
     assert not window.effects_checkbox.isChecked()
 
     window.hotkey.pressed.emit()
-    assert window.audio_processor.effects_enabled
+    assert window.audio_processor.routes[0].effects_enabled
 
 
 @windows_only

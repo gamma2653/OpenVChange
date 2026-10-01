@@ -243,7 +243,7 @@ def test_effect_sliders_are_disabled_until_their_effect_is_enabled(window):
 
 def test_effects_checkbox_bypasses_the_chain(window):
     window.effects_checkbox.setChecked(False)
-    assert not window.audio_processor.effects_enabled
+    assert not window.audio_processor.routes[0].effects_enabled
     assert window.effects_checkbox.text() == "Enable Effects"
 
 
@@ -256,7 +256,7 @@ def test_reset_restores_every_default(window):
     window.on_reset_defaults()
 
     assert window.get_preset() == defaults
-    assert window.audio_processor.effects_enabled
+    assert window.audio_processor.routes[0].effects_enabled
 
 
 # --- presets -------------------------------------------------------------------
@@ -282,7 +282,7 @@ def test_legacy_preset_loads_and_reaches_the_engine(window):
     assert engine.delay_ms == 586
     assert engine.compressor_ratio == pytest.approx(11.4)
     assert engine.deesser_enabled
-    assert window.audio_processor.chunk_size == 4096
+    assert window.audio_processor.routes[0].chunk_size == 4096
     assert engine.pitch_num_voices == 6
 
 
@@ -408,7 +408,7 @@ def test_preset_loaded_while_running_does_not_touch_the_running_stream(window, t
     assert window.buffer_size_combo.currentData() == 4096
     assert window.pitch_voices_spin.value() == 6
     # ...but the running engine keeps what it started with.
-    assert engine.chunk_size == 1024
+    assert engine.routes[0].chunk_size == 1024
     assert engine.effects.pitch_num_voices == 4
     assert engine.effects.pitch_read_pos is voices_before
     assert status == "Status: Preset loaded (buffer size and pitch voices take effect at the next start)"
@@ -421,7 +421,7 @@ def test_stream_settings_from_a_preset_take_effect_at_the_next_start(window, tmp
     load_text(window, tmp_path, monkeypatch, json.dumps(LEGACY_PRESET))
 
     window.on_stop()
-    assert window.audio_processor.chunk_size == 4096
+    assert window.audio_processor.routes[0].chunk_size == 4096
     assert window.effects.pitch_num_voices == 6
 
     window.on_start()

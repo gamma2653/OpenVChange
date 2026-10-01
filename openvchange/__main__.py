@@ -550,7 +550,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Status: Found {found} devices")
 
     def on_effects_toggled(self, checked):
-        self.audio_processor.set_effects_enabled(checked)
+        self.audio_processor.routes[0].effects_enabled = checked
 
     def on_gain_changed(self, value):
         self.gain_label.setText(f"{value} dB")
@@ -686,7 +686,7 @@ class MainWindow(QMainWindow):
             return
         buffer_size, voices = self.stream_settings()
         if buffer_size is not None:
-            self.audio_processor.set_chunk_size(buffer_size)
+            self.audio_processor.routes[0].chunk_size = buffer_size
         self.effects.set_pitch_num_voices(voices)
 
     def on_reset_defaults(self):
@@ -858,8 +858,8 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Status: Please select both devices")
             return
 
-        self.audio_processor.set_input_device(input_device)
-        self.audio_processor.set_output_device(output_device)
+        self.audio_processor.routes[0].input_device = input_device
+        self.audio_processor.routes[0].output_device = output_device
         self.apply_stream_settings()
         try:
             self.audio_processor.start()
