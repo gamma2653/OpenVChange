@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenVChange is a real-time voice changer and audio router for Windows, written in Python. It captures audio from an input device, runs it through a chain of effects, and routes the result to an output device. The GUI is PySide6. It is distributed as a single executable built with PyInstaller.
+OpenVChange is a real-time voice changer and audio router for Windows, written in Python. It captures audio from one or more input devices, runs it along routes that each have a chain of effects of their own, and plays the results on one or more output devices. The GUI is PySide6. It is distributed as a single executable built with PyInstaller.
 
 ## Commands
 
@@ -38,6 +38,8 @@ CI and release builds use Python 3.12. The locked NumPy (1.26) has no wheels for
 
 - Tests live in `tests/` and run headless; `tests/conftest.py` selects Qt's offscreen platform
 - `pyaudio.PyAudio` is replaced by `tests/fakes.py` for every test, so nothing opens a real audio device. Never open a real stream from a test: it would route the microphone to the speakers
+- A fake stream is driven by hand: `feed()` pushes a buffer into a stream that captures, `pull()` asks an output stream for its next buffer. Routing through several streams is tested by calling them in turn (`tests/test_multiple_routes.py`)
+- Clock drift between devices is tested by simulation, on `routing.Link` alone (`tests/test_routing.py`). It has not been measured on real hardware
 - Effects are tested by feeding synthetic signals through the engine and measuring the result (`tests/helpers.py`). Settings are passed in engine units (dB, Hz, ms, semitones)
 - Output must not depend on the buffer size; `test_output_does_not_depend_on_the_buffer_size` guards that
 - `tests/reference_dsp.py` holds plain sample-by-sample implementations of the delay, the gain, the pitch shifter, the compressor, and a second-order filter. The fast code in `dsp.py` and `filters.py` must match them (`tests/test_matches_reference.py`, `tests/test_filters.py`), so an optimisation never changes the sound. When the behaviour of an effect is changed on purpose, change its reference too, or replace it by tests of the new behaviour
@@ -58,20 +60,31 @@ Releases are driven by Changesets. `package.json` is the version source of truth
 The codebase is split by concern. The window, the audio stream, and the signal processing each have their own module, and the signal processing depends on neither of the others:
 
 **`openvchange/__main__.py`** - GUI layer using PySide6/Qt
-- `MainWindow`: Orchestrates UI components and AudioProcessor
-- Device selection (input/output combo boxes)
-- Filter control sliders/checkboxes for all DSP parameters
-- Input and output level meters with peak hold and clip lights
-- Start/Stop/Reset controls
-- Effect parameters are set on `self.effects` (the chain); stream settings on `self.audio_processor`
+- `MainWindow`: a tab per route (`self.tabs`, one `RoutePanel` each, in `self.routes`, in the order of `AudioProcessor.routes`), and what applies to all routes: Start/Stop/Reset, the preset list and buttons, which act on the route whose tab is shown (`self.route`), and the status line
+- Add Route, in the corner of the tab bar, adds a route like the one shown with an output no route uses yet. The cross on a tab removes its route; the last one keeps no cross. Both are locked while audio runs
+- Show all devices and Refresh are on every route's Main tab but are one setting and one action for all of them; the window handles both
+
+**`openvchange/route_panel.py`** - One route's tabs
+- `RoutePanel`: the Main, Dynamics, and Advanced Settings tabs of one route. Every control acts on the route's own `EffectsChain`, the meters show its own levels, and it has its own `GlobalHotkey`. `preset_controls()` maps each preset key to its control and is the single list that saving, loading, and checking all use. A new setting only needs an entry there
+- `DevicePicker`: a device list with the list of the device's channels next to it. Devices are identified by `Device.identity`; `restore()` brings back a saved device and channel
+- `apply_devices()` and `apply_stream_settings()` pass what the controls show to the route; the window calls them before each start
+- A new panel pushes every control's value to its route once (`push_settings()`), since a control only reports a value that changes
+- A row shows a new child widget at once (`row.show()`), because Qt would otherwise do so later and the height of the list is computed right away
 
 **`openvchange/audio.py`** - Audio streaming
 - `AudioProcessor`: Qt QObject with callback-based PyAudio streaming
-- Full-duplex audio (simultaneous input/output)
-- Converts 16-bit PCM to float and back, emits the level meter signal, and handles the master bypass
-- Owns an `EffectsChain` as `.effects`
+- Holds `routes`. A `Route` is an input device (or one channel of it), its own `EffectsChain` and bypass, and an output device (or one channel of it). Routes are independent: two may share an input or an output. `.effects` is the chain of the first route
+- A single route with no channel picked opens one full-duplex stream, as the app always did. Anything else opens one stream per device: input callbacks run the effects of the routes that start there and write each to its `Link`, output callbacks read the links of the routes that end there, sum them, and limit the sum where more than one route arrives
+- Routes must not be added, removed, or rewired while streams are open: the audio threads use them without a lock
+- Converts 16-bit PCM to float and back, emits the level meter signal per route, and handles the bypass of each route
+- A device is opened with one channel when no channel of it is picked, and with all of its channels otherwise, or when it refuses one (`stream_channels()`). PyAudio takes a single channel count per stream, which is why picking a channel rules out the full-duplex stream
 - Owns the only `PyAudio` instance (`.pa`). PortAudio scans for devices once, when its first instance is created, and further instances share that scan. Creating a second instance therefore finds nothing new; `refresh_devices()` shuts PortAudio down and starts it again, which is only possible while no stream is open
 - Device indexes change on every refresh. Identify a device by `Device.identity` (name and host API) whenever it has to be found again
+
+**`openvchange/routing.py`** - Between devices
+- `Link`: a queue from the audio thread of one device to that of another. Devices do not share a clock, so it makes up for the drift by handing out one sample more or fewer per read while its usual fill is off, and returns exactly what was written the rest of the time. See its docstring before changing the thresholds: they are sized in bursts, not buffers, because devices deliver in periods of about 10 ms whatever buffer size is asked for
+- `limit`: keeps a mix below full scale and leaves everything under the knee untouched. It is only applied where several routes meet, so a single route sounds as it did
+- No Qt, no PyAudio
 
 **`openvchange/dsp.py`** - Signal processing
 - `EffectsChain`: every effect, working on float32 NumPy arrays
@@ -108,7 +121,7 @@ The codebase is split by concern. The window, the audio stream, and the signal p
 - Tests check that every preset fits the controls and leaves headroom on a voice at a normal level. They cannot check how a preset sounds
 
 **`openvchange/hotkey.py`** - System-wide shortcut (Windows only)
-- `GlobalHotkey` registers one shortcut with `RegisterHotKey` for the GUI thread and hears about presses through a native event filter. No window handle is involved
+- `GlobalHotkey` registers one shortcut with `RegisterHotKey` for the GUI thread and hears about presses through a native event filter. No window handle is involved. Each instance takes an id of its own (`HOTKEY_ID` and up, given back on `close()`), so every route can have a shortcut
 - No shortcut is set by default: Ctrl+Alt plus a letter types a character on many keyboard layouts, and any default could clash with another application
 - Tests replace the backend with a fake (`tests/conftest.py`). Presses are tested by posting the real `WM_HOTKEY` message to the thread. Never simulate key presses in a test: they would go to whatever has the focus on the machine running the tests
 
@@ -118,14 +131,15 @@ The codebase is split by concern. The window, the audio stream, and the signal p
 - Anything added to `assets/` is packed into the executable by the spec
 
 **`openvchange/settings.py`** - What is remembered between launches
-- Devices (by identity), the device filter, and the effect settings, as `settings.json` in the per-user configuration folder (`%APPDATA%\OpenVChange` on Windows)
-- The effect settings inside it have the same form as a preset and go through the same checks
+- The routes (devices by identity, with their channels), each with its settings and its shortcut, the tab that was shown, and the device filter, as `settings.json` in the per-user configuration folder (`%APPDATA%\OpenVChange` on Windows)
+- The effect settings inside it have the same form as a preset and go through the same checks. `settings.routes()` checks the form of the rest
+- Files from before there were routes have `input_device`, `output_device`, `effects_shortcut`, and `preset` only, and load as one route. Those four are still written, for the first route, so that an older version can read a newer file
 - Saved when the window closes, restored after the device lists are filled. A damaged file is reported in the status line and never prevents startup
 - Tests redirect `settings.default_path` to a temporary folder (`tests/conftest.py`), so they never read or write real settings
 
 ## Audio Processing Pipeline
 
-Signal flow (in order):
+Signal flow of a route (in order):
 1. Input capture → int16 to float32 normalization
 2. Expander/Gate (peak detector, gain smoothed in dB)
 3. High-Pass Filter (Butterworth, 20-500 Hz)
@@ -140,19 +154,22 @@ Signal flow (in order):
 12. Gain (slider ±100 dB, smoothed)
 13. Soft clipping (tanh) → float32 to int16 output
 
+With more than one stream, step 13 ends at the link of the route instead, and each output stream then sums the routes that end there, limits the sum if there is more than one, and converts to int16.
+
 The slider ranges are wider than is useful for most voices, and users have presets that rely on that. Do not narrow them.
 
 ## Technical Specs
 
-- Sample Rate: negotiated at each start. The first of 48000, 44100, 96000, 32000, 22050, 16000 Hz that both devices support
-- Buffer Size: 128 to 4096 samples, 1024 by default
-- Audio Format: 16-bit PCM, mono
+- Sample Rate: negotiated at each start. The first of 48000, 44100, 96000, 32000, 22050, 16000 Hz that every device in use supports. All streams run at that one rate
+- Buffer Size: 128 to 4096 samples, 1024 by default, per route. A device that several routes use is opened with the largest of their buffer sizes
+- Audio Format: 16-bit PCM. Routes are mono; a stream has more channels only to pick one of them
+- Delay added by a link: two bursts at most, where a burst is the buffer size or 10 ms, whichever is longer
 - Filter Design: second-order, from the Audio EQ Cookbook. Butterworth for high-pass and low-pass
 - Processing time: about 1 ms per 1024-sample buffer at 48 kHz with everything on (`scripts/benchmark.py`)
 
 ## Key Implementation Details
 
-- The Main tab's "Enable Effects" checkbox sets `AudioProcessor.effects_enabled`; when off, `apply_filters()` returns the input bytes untouched (after emitting the level meter signal) and calls `reset_effect_states()` so re-enabling starts clean
+- A route's "Enable Effects" checkbox sets its `effects_enabled`; when off, `AudioProcessor.run()` returns the input untouched (after emitting the level meter signal) and calls `reset_effect_states()` so re-enabling starts clean
 - `EffectsChain.filtered()` keeps each filter with the settings it was designed for, and designs it again only when those or the sample rate change. A filter that is switched off is dropped, so that it starts afresh
 - The audio callback has one buffer's worth of time per buffer (21 ms at 1024 samples and 48 kHz). Avoid per-sample Python loops over NumPy arrays in `dsp.py`; they are what made the engine miss that budget
 - Pitch shift uses a circular buffer with overlapping read pointers (4 by default) and a crossfade between them. Read positions advance by repeated addition; the vectorised code reproduces that with `np.add.accumulate`, cut where a voice wraps or restarts its fade
@@ -160,10 +177,10 @@ The slider ranges are wider than is useful for most voices, and users have prese
 - Dynamics processors measure level with a follower (`dsp.follow`), never from single samples: a waveform crosses zero twice per cycle, so per-sample level detection turns down signals that are well above the threshold
 - De-esser: split-band. It subtracts part of a band-passed copy of the signal (`DEESSER_CENTER_HZ`, `DEESSER_Q`), so everything outside the band passes unchanged. The band filter must stay second order: its phase then never turns by more than a quarter cycle, which is what guarantees the subtraction cannot boost
 - Expander: attack is how fast the gate opens, release how fast it closes. Its gain is smoothed in dB and bottoms out at `EXPANDER_FLOOR_DB`
-- The engine emits `levels_changed` with a `Levels` object about 30 times per second of audio, whatever the buffer size, keeping the highest peak in between. It is emitted from the audio thread; Qt queues it to the GUI thread
+- The engine emits `levels_changed` with a `Levels` object per route about 30 times per second of audio, whatever the buffer size, keeping the highest peak in between. `Levels.route` says which route; the window passes it to that route's panel. It is emitted from the audio thread; Qt queues it to the GUI thread
 - `LevelMeter` (`widgets.py`) is told how much audio each update covers and keeps time by that, not by the wall clock, so its behaviour can be tested exactly
 - The output clip light means the signal reached the soft clipper at or above full scale (`EffectsChain.peak_before_clipping`). The output itself never reaches full scale, because `tanh` does not
-- PyAudio callback runs in separate thread; use Qt signals to communicate with GUI
-- Buffer size and pitch voice count are stream settings: the engine reads them while processing, so `MainWindow.apply_stream_settings()` only passes them on while the stream is stopped
-- The callback must never raise and must never return the input on failure: for a voice changer, leaking the unprocessed voice is worse than silence. On an error it returns silence and emits `error_occurred`, and the window stops the stream
+- PyAudio callbacks run in separate threads, one per stream; use Qt signals to communicate with GUI
+- Buffer size and pitch voice count are stream settings of each route: the engine reads them while processing, so `RoutePanel.apply_stream_settings()` only passes them on while the streams are stopped
+- The callback must never raise and must never return the input on failure: for a voice changer, leaking the unprocessed voice is worse than silence. On an error it returns silence and emits `error_occurred`, and the window stops the streams. A failure on any route silences every output
 - `AudioProcessor.start()` raises `AudioStartError` with a message fit for the status line. The packaged app has no console, so `print` reaches nobody; use `logging` for detail and the status line for the user

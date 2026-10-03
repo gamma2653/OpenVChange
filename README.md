@@ -1,6 +1,6 @@
 # OpenVChange
 
-A real-time voice changer and audio router for Windows. It takes audio from an input device, such as a microphone, runs it through a chain of effects, and sends the result to an output device. Pointed at a virtual audio cable, the output becomes the microphone of any other application.
+A real-time voice changer and audio router for Windows. It takes audio from an input device, such as a microphone, runs it through a chain of effects, and sends the result to an output device. Pointed at a virtual audio cable, the output becomes the microphone of any other application. Several inputs can be routed to several outputs at once, each route with effects of its own.
 
 ## Download
 
@@ -34,19 +34,28 @@ A soft clipper at the end keeps the output from exceeding full scale however the
 - Save your own settings to a file and load them again. A preset file is plain JSON
 - The preset list shows which built-in preset is in use, and **Custom** once a setting has been changed
 
+### Routing
+
+- A **route** is an input device, a full set of effects, and an output device. Each route has a tab of its own, with its own **Main**, **Dynamics**, and **Advanced Settings** tabs inside: nothing is shared between routes but Start and Stop. **Add Route** makes another, starting as a copy of the route shown
+- One input to several outputs: two routes with the same input and different outputs, each with its own effects. A microphone can go to the headphones untouched and to a virtual cable with a changed voice
+- Several inputs to one output: two routes with the same output. They are mixed, and the mix is kept below full scale
+- Devices with more than one channel can be used a channel at a time, on the way in and on the way out. That is how the many inputs and outputs of a routing matrix such as [VB-Audio Matrix](https://vb-audio.com/Matrix/) are reached. **All** takes every channel of an input, mixed, and plays on every channel of an output
+- The preset list and the preset buttons act on the route whose tab is shown
+- Routes cannot be added, removed, or rewired while audio is running
+
 ### Devices
 
 - Any input and output device on the system can be used
 - Only WASAPI devices are listed by default, since that is the low-latency interface on Windows. **Show all devices** lists the others too
 - **Refresh** finds devices that were plugged in after the app was started
-- The sample rate is chosen to suit both devices
+- The sample rate is chosen to suit every device in use
 
 ### Interface
 
 - Level meters for input and output, on a decibel scale, with a marker for the highest recent peak and a light that shows clipping
-- **Enable Effects** switches the whole chain off and passes the input through untouched
-- A keyboard shortcut can do the same from any application, for use in the middle of a game or a call. Set it under **Advanced Settings**. Windows only
-- Devices, effect settings, and the shortcut are remembered between launches
+- **Enable Effects** switches the whole chain of a route off and passes its input through untouched
+- A keyboard shortcut can do the same from any application, for use in the middle of a game or a call. Set it under **Advanced Settings**; each route can have one. Windows only
+- The routes, with their devices, settings, and shortcuts, are remembered between launches
 - Problems are shown in the status line: a device that could not be opened, a preset that could not be read, a shortcut that is already taken
 
 ## Recommended Setup: VB-Audio Virtual Cable
@@ -56,12 +65,14 @@ To route processed audio into other applications (Discord, OBS, games, etc.), in
 1. Download and install [VB-Audio Virtual Cable](https://vb-audio.com/Cable/) (free)
 2. Restart your computer after installation
 3. In OpenVChange:
-   - Set your **Input** to your physical microphone
-   - Set your **Output** to **CABLE Input (VB-Audio Virtual Cable)**
+   - Set the input of **Route 1** to your physical microphone
+   - Set its output to **CABLE Input (VB-Audio Virtual Cable)**
 4. In your target application (Discord, OBS, etc.):
    - Set the input/microphone to **CABLE Output (VB-Audio Virtual Cable)**
 
 This routes your microphone through OpenVChange's processing pipeline and into whatever application you choose.
+
+To hear yourself as well, press **Add Route** and, on the **Route 2** tab, set the output to your headphones. It starts with the same effects as Route 1; switch **Enable Effects** off for it to hear your own voice unchanged while the application gets the changed one.
 
 ## Requirements
 
@@ -93,16 +104,18 @@ openvchange
 
 ### Controls
 
-1. **Select devices.** Choose the input and the output. Press **Refresh** if a device is missing.
-2. **Choose a preset,** or set the effects by hand. The **Main** tab has the tone and pitch controls, the **Dynamics** tab has the expander, compressor, and de-esser.
+1. **Set up the routes.** On the tab of a route, choose its input and its output. Press **Refresh** if a device is missing. **Add Route** adds another tab; the cross on a tab removes its route.
+2. **Choose a preset,** or set the effects by hand. With several routes, open the tab of the one to change first. The **Main** tab has the tone and pitch controls, the **Dynamics** tab has the expander, compressor, and de-esser.
 3. **Start.** Watch the meters. If the red light on the input meter comes on, turn the microphone down. If the one on the output meter comes on, turn the gain down.
 4. **Stop** ends processing. **Reset to Defaults** returns every setting to neutral.
 
-Settings can be changed while audio is running, with two exceptions. The buffer size and the number of pitch voices, both under **Advanced Settings**, take effect at the next start.
+Settings can be changed while audio is running, with two exceptions. The buffer size and the number of pitch voices, both under **Advanced Settings**, take effect at the next start. Both belong to a route; a device that two routes use with different buffer sizes is opened with the larger one.
 
 ### Delay through the app
 
 Every buffer of audio takes its own length to collect, which is 21 ms at the default size of 1024 samples. Smaller buffers lower the delay and raise the risk of dropouts. On top of that, the pitch shifter adds between 40 and 110 ms while the pitch is shifted, and formant control adds about 20 ms while it is in use.
+
+A single route runs both of its devices as one stream. More routes run each device on its own, and since no two devices keep exactly the same time, the audio waits in a queue between them. That adds one to two buffers of delay, or about 20 ms if the buffers are shorter than 10 ms. For the shortest delay with several outputs, lower the buffer size.
 
 ### Where settings are kept
 
@@ -152,14 +165,14 @@ Versions below 1.0.0 are published as pre-releases. The workflow lives in `.gith
 
 | Parameter | Value |
 |-----------|-------|
-| Sample rate | The first of 48, 44.1, 96, 32, 22.05, and 16 kHz that both devices support |
+| Sample rate | The first of 48, 44.1, 96, 32, 22.05, and 16 kHz that every device in use supports |
 | Buffer size | 128 to 4096 samples, 1024 by default |
 | Audio format | 16-bit PCM |
-| Channels | Mono |
+| Channels | Each route is mono. It can take one channel of a device or all of them mixed, and play on one channel or on all |
 | Filters | Second-order, from the Audio EQ Cookbook by Robert Bristow-Johnson. High-pass and low-pass are Butterworth |
 | Pitch shift | Delay line read by 1 to 8 crossfaded voices, 4 by default |
 | Formant shift | Spectral envelope from the cepstrum, moved frame by frame. Frames of 1024 samples at 48 kHz |
-| Processing time | About 1 ms per 1024-sample buffer with every effect on, which is 5 % of the time available |
+| Processing time | About 1 ms per route and 1024-sample buffer with every effect on, which is 5 % of the time available |
 
 ### Signal Flow
 
