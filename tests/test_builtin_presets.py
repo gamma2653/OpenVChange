@@ -32,7 +32,7 @@ def test_every_preset_sets_every_effect_and_nothing_else(name):
 
 @pytest.mark.parametrize("name", list(BUILT_IN))
 def test_every_preset_fits_the_controls_without_adjustment(window, name):
-    values, notes = presets.check(BUILT_IN[name], window.preset_fields())
+    values, notes = presets.check(BUILT_IN[name], window.route.preset_fields())
     assert notes == []
     assert values == BUILT_IN[name]
 
@@ -50,8 +50,8 @@ def test_a_misspelt_setting_is_caught_when_a_preset_is_defined():
 @pytest.mark.parametrize("name", list(BUILT_IN))
 def test_every_preset_leaves_headroom_on_a_normal_voice(window, name):
     # A voice peaking around -7 dB, which is a sensible microphone level.
-    window.apply_preset(BUILT_IN[name])
-    chain = window.effects
+    window.route.apply_preset(BUILT_IN[name])
+    chain = window.route.effects
     chain.set_sample_rate(SAMPLE_RATE)
     chain.reset()
     voice = voice_like(2.0)
@@ -95,45 +95,45 @@ def test_a_fresh_window_shows_neutral(window):
 def test_choosing_a_preset_applies_it(window):
     choose(window, "Deep voice")
 
-    assert window.pitch_slider.value() == -40
-    assert window.bass_slider.value() == 4
-    assert window.compressor_checkbox.isChecked()
-    assert window.effects.pitch_semitones == pytest.approx(-4.0)
-    assert window.effects.compressor_enabled
+    assert window.route.pitch_slider.value() == -40
+    assert window.route.bass_slider.value() == 4
+    assert window.route.compressor_checkbox.isChecked()
+    assert window.route.effects.pitch_semitones == pytest.approx(-4.0)
+    assert window.route.effects.compressor_enabled
     assert window.status_label.text() == "Status: Preset applied: Deep voice"
     assert window.preset_combo.currentText() == "Deep voice"
 
 
 def test_choosing_another_preset_leaves_nothing_behind(window):
     choose(window, "Telephone")
-    assert window.lp_checkbox.isChecked()
+    assert window.route.lp_checkbox.isChecked()
 
     choose(window, "Chipmunk")
 
-    expected = {**window.get_preset(), **BUILT_IN["Chipmunk"]}
-    assert window.get_preset() == expected
-    assert not window.lp_checkbox.isChecked()
-    assert not window.compressor_checkbox.isChecked()
-    assert window.bass_slider.value() == 0
+    expected = {**window.route.get_preset(), **BUILT_IN["Chipmunk"]}
+    assert window.route.get_preset() == expected
+    assert not window.route.lp_checkbox.isChecked()
+    assert not window.route.compressor_checkbox.isChecked()
+    assert window.route.bass_slider.value() == 0
 
 
 def test_a_preset_does_not_touch_the_session_settings(window):
-    window.effects_checkbox.setChecked(False)
-    window.buffer_size_combo.setCurrentIndex(0)
-    window.pitch_voices_spin.setValue(7)
+    window.route.effects_checkbox.setChecked(False)
+    window.route.buffer_size_combo.setCurrentIndex(0)
+    window.route.pitch_voices_spin.setValue(7)
 
     choose(window, "Giant")
 
-    assert not window.effects_checkbox.isChecked()
-    assert window.buffer_size_combo.currentData() == 128
-    assert window.pitch_voices_spin.value() == 7
+    assert not window.route.effects_checkbox.isChecked()
+    assert window.route.buffer_size_combo.currentData() == 128
+    assert window.route.pitch_voices_spin.value() == 7
     assert window.preset_combo.currentText() == "Giant"
 
 
 def test_changing_a_setting_shows_custom(window):
     choose(window, "Deep voice")
 
-    window.treble_slider.setValue(7)
+    window.route.treble_slider.setValue(7)
 
     assert window.preset_combo.currentIndex() == -1
     assert window.preset_combo.currentText() == ""
@@ -142,26 +142,26 @@ def test_changing_a_setting_shows_custom(window):
 
 def test_changing_the_setting_back_shows_the_preset_again(window):
     choose(window, "Deep voice")
-    window.treble_slider.setValue(7)
-    window.treble_slider.setValue(0)
+    window.route.treble_slider.setValue(7)
+    window.route.treble_slider.setValue(0)
     assert window.preset_combo.currentText() == "Deep voice"
 
 
 def test_reset_shows_neutral_and_restores_the_session_settings(window):
     choose(window, "Giant")
-    window.effects_checkbox.setChecked(False)
-    window.pitch_voices_spin.setValue(7)
+    window.route.effects_checkbox.setChecked(False)
+    window.route.pitch_voices_spin.setValue(7)
 
     window.on_reset_defaults()
 
     assert window.preset_combo.currentText() == "Neutral"
-    assert window.get_preset() == {**window.get_preset(), **NEUTRAL, **SESSION_DEFAULTS}
-    assert window.effects_checkbox.isChecked()
-    assert window.pitch_voices_spin.value() == 4
+    assert window.route.get_preset() == {**window.route.get_preset(), **NEUTRAL, **SESSION_DEFAULTS}
+    assert window.route.effects_checkbox.isChecked()
+    assert window.route.pitch_voices_spin.value() == 4
 
 
 def test_loading_a_file_that_matches_a_preset_shows_its_name(window):
-    window.apply_preset({**BUILT_IN["Telephone"], "buffer_size": 2048})
+    window.route.apply_preset({**BUILT_IN["Telephone"], "buffer_size": 2048})
     assert window.preset_combo.currentText() == "Telephone"
 
 
@@ -173,12 +173,12 @@ def test_the_preset_is_shown_again_after_a_restart(qapp):
     w = MainWindow()
 
     assert w.preset_combo.currentText() == "Radio announcer"
-    assert w.treble_slider.value() == 3
+    assert w.route.treble_slider.value() == 3
     w.close()
 
 
 def test_presets_can_be_chosen_while_running(window):
     window.on_start()
     choose(window, "Higher voice")
-    assert window.effects.pitch_semitones == pytest.approx(4.0)
+    assert window.route.effects.pitch_semitones == pytest.approx(4.0)
     assert window.audio_processor.running

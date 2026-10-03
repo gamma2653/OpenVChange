@@ -228,20 +228,20 @@ def window(qapp):
 
 def enter(window, text: str) -> None:
     """Type a shortcut into the field and leave it."""
-    window.hotkey_edit.setKeySequence(keys(text))
-    window.hotkey_edit.editingFinished.emit()
+    window.route.hotkey_edit.setKeySequence(keys(text))
+    window.route.hotkey_edit.editingFinished.emit()
 
 
 def test_no_shortcut_is_set_by_default(window):
-    assert window.hotkey.sequence.isEmpty()
-    assert window.hotkey_edit.keySequence().isEmpty()
-    assert window.hotkey.backend.registered == {}
+    assert window.route.hotkey.sequence.isEmpty()
+    assert window.route.hotkey_edit.keySequence().isEmpty()
+    assert window.route.hotkey.backend.registered == {}
 
 
 def test_entering_a_shortcut_registers_it(window):
     enter(window, "Ctrl+Shift+F9")
 
-    assert window.hotkey.sequence == keys("Ctrl+Shift+F9")
+    assert window.route.hotkey.sequence == keys("Ctrl+Shift+F9")
     assert window.status_label.text() == "Status: Ctrl+Shift+F9 now switches the effects"
 
 
@@ -249,11 +249,11 @@ def test_pressing_the_shortcut_switches_the_effects(window):
     enter(window, "Ctrl+Shift+F9")
     assert window.audio_processor.routes[0].effects_enabled
 
-    window.hotkey.pressed.emit()
+    window.route.hotkey.pressed.emit()
     assert not window.audio_processor.routes[0].effects_enabled
-    assert not window.effects_checkbox.isChecked()
+    assert not window.route.effects_checkbox.isChecked()
 
-    window.hotkey.pressed.emit()
+    window.route.hotkey.pressed.emit()
     assert window.audio_processor.routes[0].effects_enabled
 
 
@@ -264,7 +264,7 @@ def test_a_press_reaches_the_window_through_the_message_queue(qapp, window):
     post_hotkey_message(WM_HOTKEY, HOTKEY_ID)
     qapp.processEvents()
 
-    assert not window.effects_checkbox.isChecked()
+    assert not window.route.effects_checkbox.isChecked()
 
 
 def test_a_shortcut_that_cannot_be_used_is_explained_and_the_field_goes_back(window):
@@ -276,22 +276,22 @@ def test_a_shortcut_that_cannot_be_used_is_explained_and_the_field_goes_back(win
         "Status: Shift+E cannot be used: it needs Ctrl, Alt, or the Windows key, "
         "or it would get in the way of typing"
     )
-    assert window.hotkey_edit.keySequence() == keys("Ctrl+Shift+F9")
-    assert window.hotkey.sequence == keys("Ctrl+Shift+F9")
+    assert window.route.hotkey_edit.keySequence() == keys("Ctrl+Shift+F9")
+    assert window.route.hotkey.sequence == keys("Ctrl+Shift+F9")
 
 
 def test_a_shortcut_in_use_elsewhere_is_explained(window):
     FakeHotkeyBackend.taken = {(MOD_CONTROL | MOD_ALT, 0x45)}
     enter(window, "Ctrl+Alt+E")
     assert window.status_label.text() == "Status: Ctrl+Alt+E cannot be used: another application already uses it"
-    assert window.hotkey_edit.keySequence().isEmpty()
+    assert window.route.hotkey_edit.keySequence().isEmpty()
 
 
 def test_clearing_the_field_removes_the_shortcut(window):
     enter(window, "Ctrl+Shift+F9")
     enter(window, "")
 
-    assert window.hotkey.backend.registered == {}
+    assert window.route.hotkey.backend.registered == {}
     assert window.status_label.text() == "Status: Shortcut removed"
 
 
@@ -299,24 +299,24 @@ def test_leaving_the_field_unchanged_does_nothing(window):
     enter(window, "Ctrl+Shift+F9")
     window.status_label.setText("Status: Running")
 
-    window.hotkey_edit.editingFinished.emit()
+    window.route.hotkey_edit.editingFinished.emit()
 
     assert window.status_label.text() == "Status: Running"
-    assert len(window.hotkey.backend.calls) == 1
+    assert len(window.route.hotkey.backend.calls) == 1
 
 
 def test_the_shortcut_survives_a_restart(qapp, settings_path):
     w = MainWindow()
     enter(w, "Ctrl+Shift+F9")
     w.close()
-    assert w.hotkey.backend.registered == {}
+    assert w.route.hotkey.backend.registered == {}
     assert json.loads(settings_path.read_text())["effects_shortcut"] == "Ctrl+Shift+F9"
 
     w = MainWindow()
 
-    assert w.hotkey.sequence == keys("Ctrl+Shift+F9")
-    assert w.hotkey_edit.keySequence() == keys("Ctrl+Shift+F9")
-    assert w.hotkey.backend.registered == {HOTKEY_ID: (MOD_CONTROL | MOD_SHIFT, 0x78)}
+    assert w.route.hotkey.sequence == keys("Ctrl+Shift+F9")
+    assert w.route.hotkey_edit.keySequence() == keys("Ctrl+Shift+F9")
+    assert w.route.hotkey.backend.registered == {HOTKEY_ID: (MOD_CONTROL | MOD_SHIFT, 0x78)}
     assert w.status_label.text() == "Status: Stopped"
     w.close()
 
@@ -324,14 +324,14 @@ def test_the_shortcut_survives_a_restart(qapp, settings_path):
 def test_a_remembered_shortcut_that_is_now_taken_is_mentioned(qapp, settings_path):
     w = MainWindow()
     enter(w, "Ctrl+Shift+F9")
-    w.gain_slider.setValue(4)
+    w.route.gain_slider.setValue(4)
     w.close()
     FakeHotkeyBackend.taken = {(MOD_CONTROL | MOD_SHIFT, 0x78)}
 
     w = MainWindow()
 
-    assert w.hotkey.sequence.isEmpty()
-    assert w.gain_slider.value() == 4
+    assert w.route.hotkey.sequence.isEmpty()
+    assert w.route.gain_slider.value() == 4
     assert w.status_label.text() == (
         "Status: Stopped (the shortcut Ctrl+Shift+F9 cannot be used: another application already uses it)"
     )
@@ -341,14 +341,47 @@ def test_a_remembered_shortcut_that_is_now_taken_is_mentioned(qapp, settings_pat
 def test_the_field_is_disabled_where_shortcuts_are_not_supported(qapp, monkeypatch):
     monkeypatch.setattr(hotkey, "default_backend", lambda: None)
     w = MainWindow()
-    assert not w.hotkey_edit.isEnabled()
+    assert not w.route.hotkey_edit.isEnabled()
     w.close()
 
 
 def test_closing_the_window_gives_the_shortcut_back(window):
     enter(window, "Ctrl+Shift+F9")
-    backend = window.hotkey.backend
+    backend = window.route.hotkey.backend
 
     window.close()
 
     assert backend.registered == {}
+
+
+def test_each_shortcut_has_an_id_of_its_own(qapp):
+    first, second = GlobalHotkey(), GlobalHotkey()
+    try:
+        assert first.hotkey_id == HOTKEY_ID
+        assert second.hotkey_id == HOTKEY_ID + 1
+        first.set_sequence(keys("Ctrl+Alt+1"))
+        second.set_sequence(keys("Ctrl+Alt+2"))
+        assert set(first.backend.registered) == {HOTKEY_ID}
+        assert set(second.backend.registered) == {HOTKEY_ID + 1}
+    finally:
+        first.close()
+        second.close()
+
+    assert GlobalHotkey().hotkey_id == HOTKEY_ID  # ids are given back
+
+
+@windows_only
+def test_a_press_reaches_the_shortcut_it_is_for(qapp):
+    first, second = GlobalHotkey(), GlobalHotkey()
+    heard = []
+    first.pressed.connect(lambda: heard.append(1))
+    second.pressed.connect(lambda: heard.append(2))
+    first.set_sequence(keys("Ctrl+Alt+1"))
+    second.set_sequence(keys("Ctrl+Alt+2"))
+
+    post_hotkey_message(WM_HOTKEY, second.hotkey_id)
+    qapp.processEvents()
+
+    assert heard == [2]
+    first.close()
+    second.close()

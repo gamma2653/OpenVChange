@@ -94,7 +94,7 @@ def test_the_version_is_the_same_everywhere():
 
 def test_the_window_shows_the_version(qapp):
     window = MainWindow()
-    assert window.version_label.text() == f"OpenVChange {openvchange.__version__}"
+    assert window.route.version_label.text() == f"OpenVChange {openvchange.__version__}"
     window.close()
 
 

@@ -300,52 +300,52 @@ def window(qapp):
 
 
 def test_formant_controls_drive_the_engine(window):
-    window.formant_slider.setValue(-35)
-    window.formant_preserve_checkbox.setChecked(True)
+    window.route.formant_slider.setValue(-35)
+    window.route.formant_preserve_checkbox.setChecked(True)
 
-    assert window.effects.formant_semitones == pytest.approx(-3.5)
-    assert window.effects.formant_preserve
-    assert window.formant_label.text() == "-3.5 st"
+    assert window.route.effects.formant_semitones == pytest.approx(-3.5)
+    assert window.route.effects.formant_preserve
+    assert window.route.formant_label.text() == "-3.5 st"
 
 
 def test_formants_are_left_alone_by_default(window):
-    assert window.formant_slider.value() == 0
-    assert not window.formant_preserve_checkbox.isChecked()
-    assert window.effects.formant_ratio() == 1.0
+    assert window.route.formant_slider.value() == 0
+    assert not window.route.formant_preserve_checkbox.isChecked()
+    assert window.route.effects.formant_ratio() == 1.0
 
 
 def test_formant_settings_are_part_of_a_preset(window):
-    window.formant_slider.setValue(20)
-    window.formant_preserve_checkbox.setChecked(True)
-    saved = window.get_preset()
+    window.route.formant_slider.setValue(20)
+    window.route.formant_preserve_checkbox.setChecked(True)
+    saved = window.route.get_preset()
     assert saved["formant"] == 20
     assert saved["formant_preserve"] is True
 
     window.on_reset_defaults()
-    assert window.formant_slider.value() == 0
-    assert not window.formant_preserve_checkbox.isChecked()
+    assert window.route.formant_slider.value() == 0
+    assert not window.route.formant_preserve_checkbox.isChecked()
 
-    window.apply_preset(saved)
-    assert window.effects.formant_semitones == pytest.approx(2.0)
-    assert window.effects.formant_preserve
+    window.route.apply_preset(saved)
+    assert window.route.effects.formant_semitones == pytest.approx(2.0)
+    assert window.route.effects.formant_preserve
 
 
 def test_a_preset_from_before_formants_existed_leaves_them_alone(window):
-    window.formant_slider.setValue(20)
-    window.apply_preset({"gain": 5, "pitch": -23})
-    assert window.formant_slider.value() == 20
-    assert window.pitch_slider.value() == -23
+    window.route.formant_slider.setValue(20)
+    window.route.apply_preset({"gain": 5, "pitch": -23})
+    assert window.route.formant_slider.value() == 20
+    assert window.route.pitch_slider.value() == -23
 
 
 def test_formant_settings_survive_a_restart(qapp):
     w = MainWindow()
-    w.formant_slider.setValue(-15)
-    w.formant_preserve_checkbox.setChecked(True)
+    w.route.formant_slider.setValue(-15)
+    w.route.formant_preserve_checkbox.setChecked(True)
     w.close()
 
     w = MainWindow()
 
-    assert w.formant_slider.value() == -15
-    assert w.formant_preserve_checkbox.isChecked()
-    assert w.effects.formant_semitones == pytest.approx(-1.5)
+    assert w.route.formant_slider.value() == -15
+    assert w.route.formant_preserve_checkbox.isChecked()
+    assert w.route.effects.formant_semitones == pytest.approx(-1.5)
     w.close()
