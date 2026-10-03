@@ -1,4 +1,4 @@
-"""What the app remembers between launches: the chosen devices and the effect settings.
+"""What the app remembers between launches: the routes, their devices, and their settings.
 
 Stored as one JSON file in the user's configuration folder. The effect settings inside
 it have the same form as a preset file. Nothing here depends on Qt.
@@ -66,3 +66,51 @@ def save(path: str | Path, data: dict) -> None:
         os.replace(partial, path)
     except OSError as e:
         raise SettingsError("the file could not be written") from e
+
+
+def routes(data: dict) -> list[dict]:
+    """The routes in saved settings, checked for their form.
+
+    A route is {"input_device", "input_channel", "output_device", "output_channel",
+    "shortcut", "preset"}, where the preset holds its settings and is not checked here.
+    Settings from before there were routes name one input device, one output device,
+    one shortcut, and one preset; they give one route.
+
+    Raises SettingsError if the file says something else than this.
+    """
+    if "routes" not in data:
+        return [
+            {
+                "input_device": data.get("input_device"),
+                "input_channel": None,
+                "output_device": data.get("output_device"),
+                "output_channel": None,
+                "shortcut": data.get("effects_shortcut"),
+                "preset": data.get("preset", {}),
+            }
+        ]
+
+    saved = data["routes"]
+    if not isinstance(saved, list) or not saved or not all(isinstance(route, dict) for route in saved):
+        raise SettingsError("the file is damaged")
+    for route in saved:
+        for side in ("input", "output"):
+            channel = route.get(f"{side}_channel")
+            if channel is not None and not is_count(channel):
+                raise SettingsError("the file is damaged")
+    return [
+        {
+            "input_device": route.get("input_device"),
+            "input_channel": route.get("input_channel"),
+            "output_device": route.get("output_device"),
+            "output_channel": route.get("output_channel"),
+            "shortcut": route.get("shortcut"),
+            "preset": route.get("preset", {}),
+        }
+        for route in saved
+    ]
+
+
+def is_count(value: object) -> bool:
+    """Whether a value is a whole number from zero up. True and false are not numbers here."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0

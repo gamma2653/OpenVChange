@@ -310,8 +310,7 @@ class MainWindow(QMainWindow):
     # --- settings ------------------------------------------------------------------
 
     def restore_settings(self):
-        """Bring back the devices and settings from the last session, where possible."""
-        panel = self.route
+        """Bring back the routes and their settings from the last session, where possible."""
         try:
             saved = settings.load(self.settings_path)
             if not saved:
@@ -319,42 +318,68 @@ class MainWindow(QMainWindow):
             show_all = saved.get("show_all_devices", False)
             if not isinstance(show_all, bool):
                 raise settings.SettingsError("the file is damaged")
-            notes = panel.apply_preset(saved.get("preset", {}))
+            routes = settings.routes(saved)
+            # The whole file is checked before anything is applied.
+            fields = self.route.preset_fields()
+            checked = [presets.check(route["preset"], fields) for route in routes]
         except (settings.SettingsError, presets.PresetError) as e:
             logger.warning("Could not restore settings from %s: %s", self.settings_path, e)
             self.status_label.setText(f"Status: Your saved settings could not be restored: {e}")
             return
 
+        several = len(routes) > 1
         self.set_show_all_devices(show_all)
-        shortcut = saved.get("effects_shortcut")
-        if isinstance(shortcut, str) and shortcut:
-            wanted = QKeySequence.fromString(shortcut, QKeySequence.SequenceFormat.PortableText)
-            try:
-                panel.set_shortcut(wanted)
-            except HotkeyError as e:
-                notes.append(f"the shortcut {shortcut} cannot be used: {e}")
-        missing = [
-            kind
-            for kind, picker in (("input", panel.input), ("output", panel.output))
-            if saved.get(f"{kind}_device") is not None and not picker.select(saved[f"{kind}_device"])
-        ]
+        while len(self.routes) < len(routes):
+            self.add_route()
+        notes = []
+        missing = []
+        for number, (panel, route, (values, route_notes)) in enumerate(zip(self.routes, routes, checked), start=1):
+            of_route = f" of route {number}" if several else ""
+            notes += [f"route {number}: {note}" if several else note for note in route_notes]
+            panel.apply_preset(values)
+            for side, picker in (("input", panel.input), ("output", panel.output)):
+                if not picker.restore(route[f"{side}_device"], route[f"{side}_channel"]):
+                    missing.append(f"the {side} device{of_route}")
+            shortcut = route["shortcut"]
+            if isinstance(shortcut, str) and shortcut:
+                wanted = QKeySequence.fromString(shortcut, QKeySequence.SequenceFormat.PortableText)
+                try:
+                    panel.set_shortcut(wanted)
+                except HotkeyError as e:
+                    notes.append(f"the shortcut {shortcut}{of_route} cannot be used: {e}")
         if missing:
-            notes.append(f"the {' and '.join(missing)} device used last time was not found")
+            notes.append(f"{' and '.join(missing)} used last time was not found")
+        selected = saved.get("selected_route")
+        self.tabs.setCurrentIndex(selected if settings.is_count(selected) and selected < len(routes) else 0)
         if notes:
             status = f"Status: Stopped ({'; '.join(notes)})"
             self.status_label.setText(status)
             self.status_label.setToolTip(status)
 
     def save_settings(self):
-        """Remember the devices and settings for the next session."""
-        panel = self.routes[0]
+        """Remember the routes and their settings for the next session."""
+        routes = [
+            {
+                "input_device": panel.input.identity(),
+                "input_channel": panel.input.channel.currentData(),
+                "output_device": panel.output.identity(),
+                "output_channel": panel.output.channel.currentData(),
+                "shortcut": panel.hotkey.sequence.toString(QKeySequence.SequenceFormat.PortableText),
+                "preset": panel.get_preset(),
+            }
+            for panel in self.routes
+        ]
         data = {
-            "version": 1,
-            "input_device": panel.input.identity(),
-            "output_device": panel.output.identity(),
+            "version": 2,
             "show_all_devices": self.show_all_devices,
-            "effects_shortcut": panel.hotkey.sequence.toString(QKeySequence.SequenceFormat.PortableText),
-            "preset": panel.get_preset(),
+            "routes": routes,
+            "selected_route": self.tabs.currentIndex(),
+            # Versions from before there were routes read these four, and so still
+            # find the first route.
+            "input_device": routes[0]["input_device"],
+            "output_device": routes[0]["output_device"],
+            "effects_shortcut": routes[0]["shortcut"],
+            "preset": routes[0]["preset"],
         }
         try:
             settings.save(self.settings_path, data)
