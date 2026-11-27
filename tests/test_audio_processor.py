@@ -16,8 +16,8 @@ SPEAKERS = 3
 
 def started_processor() -> AudioProcessor:
     p = AudioProcessor()
-    p.set_input_device(MIC)
-    p.set_output_device(SPEAKERS)
+    p.routes[0].input_device = MIC
+    p.routes[0].output_device = SPEAKERS
     p.start()
     return p
 
@@ -38,9 +38,9 @@ def test_start_opens_one_full_duplex_stream_on_the_selected_devices():
 
 def test_start_uses_the_configured_buffer_size():
     p = AudioProcessor()
-    p.set_input_device(MIC)
-    p.set_output_device(SPEAKERS)
-    p.set_chunk_size(256)
+    p.routes[0].input_device = MIC
+    p.routes[0].output_device = SPEAKERS
+    p.routes[0].chunk_size = 256
     p.start()
     assert p.pa.streams[0].kwargs["frames_per_buffer"] == 256
 
@@ -65,8 +65,8 @@ def test_start_picks_a_rate_both_devices_support():
         device("Speakers", WASAPI, inputs=0, outputs=2, rates=(44100, 96000)),
     ]
     p = AudioProcessor()
-    p.set_input_device(0)
-    p.set_output_device(1)
+    p.routes[0].input_device = 0
+    p.routes[0].output_device = 1
     p.start()
     assert p.sample_rate == 44100
 
@@ -80,7 +80,7 @@ def test_stop_closes_the_stream():
     assert not p.running
     assert not stream.started
     assert stream.closed
-    assert p.stream is None
+    assert p.streams == []
 
 
 def test_stop_before_start_is_harmless():
@@ -96,35 +96,35 @@ def test_start_reports_why_the_stream_could_not_be_opened():
 def test_failed_open_leaves_the_engine_stopped():
     FakePyAudio.open_error = OSError("device unavailable")
     p = AudioProcessor()
-    p.set_input_device(MIC)
-    p.set_output_device(SPEAKERS)
+    p.routes[0].input_device = MIC
+    p.routes[0].output_device = SPEAKERS
 
     with pytest.raises(AudioStartError, match="device unavailable"):
         p.start()
 
     assert not p.running
-    assert p.stream is None
+    assert p.streams == []
 
 
 def test_stream_that_opens_but_will_not_start_is_closed():
     FakePyAudio.start_error = OSError("Unanticipated host error", -9999)
     p = AudioProcessor()
-    p.set_input_device(MIC)
-    p.set_output_device(SPEAKERS)
+    p.routes[0].input_device = MIC
+    p.routes[0].output_device = SPEAKERS
 
     with pytest.raises(AudioStartError, match="Unanticipated host error"):
         p.start()
 
     assert not p.running
-    assert p.stream is None
+    assert p.streams == []
     assert p.pa.streams[0].closed
 
 
 def test_engine_can_start_after_a_failed_attempt():
     FakePyAudio.open_error = OSError("device unavailable")
     p = AudioProcessor()
-    p.set_input_device(MIC)
-    p.set_output_device(SPEAKERS)
+    p.routes[0].input_device = MIC
+    p.routes[0].output_device = SPEAKERS
     with pytest.raises(AudioStartError):
         p.start()
 
@@ -141,7 +141,7 @@ def test_starting_twice_does_not_leak_the_first_stream():
     p.start()
 
     assert first.closed
-    assert p.stream is p.pa.streams[1]
+    assert p.streams == [p.pa.streams[1]]
 
 
 def test_callback_processes_audio_while_running():
@@ -168,7 +168,7 @@ def test_callback_returns_silence_when_stopped():
 
 def test_callback_returns_silence_when_there_is_no_input():
     p = started_processor()
-    out, flag = p.audio_callback(None, 512, {}, 0)
+    out, flag = p.pa.streams[0].callback(None, 512, {}, 0)
     assert out == b"\x00" * 1024
     assert flag == pyaudio.paContinue
 
@@ -254,7 +254,7 @@ def test_output_just_below_full_scale_is_not_flagged(qapp):
 def test_bypassed_output_is_metered_as_the_input(qapp):
     p = AudioProcessor()
     p.effects.set_gain(30.0)
-    p.set_effects_enabled(False)
+    p.routes[0].effects_enabled = False
 
     seen = metered(p, sine(1000.0, 0.25))
 
@@ -329,7 +329,7 @@ def test_restart_clears_a_processing_failure(qapp):
 
 def test_bypass_still_passes_audio_through_untouched(qapp):
     p = started_processor()
-    p.set_effects_enabled(False)
+    p.routes[0].effects_enabled = False
     voice = to_pcm(sine(300.0, 0.5, seconds=0.1))[:1024].tobytes()
     assert p.pa.streams[0].feed(voice) == voice
 
@@ -369,8 +369,8 @@ def test_refresh_restarts_portaudio_to_scan_again():
 
 def test_refresh_forgets_device_indexes_because_they_no_longer_mean_anything():
     p = AudioProcessor()
-    p.set_input_device(MIC)
-    p.set_output_device(SPEAKERS)
+    p.routes[0].input_device = MIC
+    p.routes[0].output_device = SPEAKERS
 
     p.refresh_devices()
 

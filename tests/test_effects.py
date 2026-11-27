@@ -58,7 +58,7 @@ def change_db(settings: dict, freq: float, amplitude: float) -> float:
 
 def test_bypass_returns_the_input_bytes_untouched():
     p = make_processor(**EVERYTHING)
-    p.set_effects_enabled(False)
+    p.routes[0].effects_enabled = False
     pcm = to_pcm(voice_like(0.2))
     assert np.array_equal(process_pcm(p, pcm), pcm[: len(pcm) // 1024 * 1024])
 
@@ -68,7 +68,7 @@ def test_bypass_clears_filter_state_so_reenabling_starts_clean():
     process(p, voice_like(0.1))
     assert p.effects.filter_states
 
-    p.set_effects_enabled(False)
+    p.routes[0].effects_enabled = False
     process(p, voice_like(0.1))
     assert p.effects.filter_states == {}
 

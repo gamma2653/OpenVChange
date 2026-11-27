@@ -15,7 +15,15 @@ DEFAULT_HOST_APIS = [
 ]
 
 
-def device(name: str, host_api: int, inputs: int, outputs: int, rates: tuple[int, ...] = (48000, 44100)) -> dict:
+def device(
+    name: str,
+    host_api: int,
+    inputs: int,
+    outputs: int,
+    rates: tuple[int, ...] = (48000, 44100),
+    all_channels_only: bool = False,
+) -> dict:
+    """A device. With `all_channels_only` it refuses to be opened with fewer channels than it has."""
     return {
         "name": name,
         "hostApi": host_api,
@@ -23,6 +31,7 @@ def device(name: str, host_api: int, inputs: int, outputs: int, rates: tuple[int
         "maxOutputChannels": outputs,
         "defaultSampleRate": float(rates[0]),
         "supportedRates": rates,
+        "allChannelsOnly": all_channels_only,
     }
 
 
@@ -59,12 +68,25 @@ class FakeStream:
     def is_active(self) -> bool:
         return self.started
 
-    def feed(self, data: bytes) -> bytes:
-        """Push one input buffer through the callback, as PortAudio would."""
+    def feed(self, data: bytes) -> bytes | None:
+        """Push one input buffer through the callback, as PortAudio would.
+
+        Returns what the stream plays in return, which is nothing for an input stream.
+        """
         assert self.callback is not None, "stream was opened without a callback"
-        frames = len(data) // 2
+        assert self.kwargs["input"], "fed a stream that does not capture"
+        frames = len(data) // (2 * self.kwargs["channels"])
         out, flag = self.callback(data, frames, {}, 0)
         assert flag == pyaudio.paContinue
+        return out
+
+    def pull(self, frames: int) -> bytes:
+        """Ask an output stream for its next buffer, as PortAudio would."""
+        assert self.callback is not None, "stream was opened without a callback"
+        assert self.kwargs["output"] and not self.kwargs["input"], "pulled from a stream that captures"
+        out, flag = self.callback(None, frames, {}, 0)
+        assert flag == pyaudio.paContinue
+        assert len(out) == frames * 2 * self.kwargs["channels"]
         return out
 
 
@@ -122,20 +144,34 @@ class FakePyAudio:
         return self._devices[index]
 
     def is_format_supported(self, rate: float, **kwargs: Any) -> bool:
-        for key in ("input_device", "output_device"):
-            index = kwargs.get(key)
+        for side in ("input", "output"):
+            index = kwargs.get(f"{side}_device")
             if index is None:
                 continue
-            if int(rate) not in self._devices[index]["supportedRates"]:
+            info = self._devices[index]
+            if int(rate) not in info["supportedRates"]:
                 raise ValueError("Invalid sample rate", -9997)
+            self.check_channels(info, side, kwargs[f"{side}_channels"])
         return True
+
+    @staticmethod
+    def check_channels(info: dict, side: str, channels: int) -> None:
+        available = info["maxInputChannels" if side == "input" else "maxOutputChannels"]
+        if channels > available or (info.get("allChannelsOnly") and channels != available):
+            raise ValueError("Invalid number of channels", -9998)
 
     def open(self, **kwargs: Any) -> FakeStream:
         assert not self.terminated, "opened a stream on a terminated instance"
-        for key in ("input_device_index", "output_device_index"):
-            index = kwargs.get(key)
-            if index is not None and not 0 <= index < len(self._devices):
+        for side in ("input", "output"):
+            index = kwargs.get(f"{side}_device_index")
+            if index is None:
+                continue
+            if not 0 <= index < len(self._devices):
                 raise OSError(-9996, "Invalid device")
+            try:
+                self.check_channels(self._devices[index], side, kwargs["channels"])
+            except ValueError as e:
+                raise OSError(*reversed(e.args)) from e
         error = type(self).open_error
         if error is not None:
             raise error

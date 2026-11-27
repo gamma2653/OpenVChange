@@ -93,8 +93,8 @@ def test_settings_survive_a_restart(qapp, settings_path):
     assert w.get_preset() == before
     assert w.effects.pitch_semitones == pytest.approx(-2.5)
     assert w.effects.compressor_enabled
-    assert not w.audio_processor.effects_enabled
-    assert w.audio_processor.chunk_size == 256
+    assert not w.audio_processor.routes[0].effects_enabled
+    assert w.audio_processor.routes[0].chunk_size == 256
     assert w.effects.pitch_num_voices == 6
     assert w.compressor_ratio_slider.isEnabled()
     assert w.status_label.text() == "Status: Stopped"
