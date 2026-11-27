@@ -71,7 +71,7 @@ def reopen(window) -> MainWindow:
 
 def test_first_launch_starts_with_defaults_and_writes_nothing(qapp, settings_path):
     w = MainWindow()
-    assert w.gain_slider.value() == 0
+    assert w.route.gain_slider.value() == 0
     assert w.status_label.text() == "Status: Stopped"
     assert not settings_path.exists()
     w.close()
@@ -79,78 +79,78 @@ def test_first_launch_starts_with_defaults_and_writes_nothing(qapp, settings_pat
 
 def test_settings_survive_a_restart(qapp, settings_path):
     w = MainWindow()
-    w.gain_slider.setValue(7)
-    w.pitch_slider.setValue(-25)
-    w.compressor_checkbox.setChecked(True)
-    w.compressor_ratio_slider.setValue(80)
-    w.effects_checkbox.setChecked(False)
-    w.buffer_size_combo.setCurrentIndex(1)
-    w.pitch_voices_spin.setValue(6)
-    before = w.get_preset()
+    w.route.gain_slider.setValue(7)
+    w.route.pitch_slider.setValue(-25)
+    w.route.compressor_checkbox.setChecked(True)
+    w.route.compressor_ratio_slider.setValue(80)
+    w.route.effects_checkbox.setChecked(False)
+    w.route.buffer_size_combo.setCurrentIndex(1)
+    w.route.pitch_voices_spin.setValue(6)
+    before = w.route.get_preset()
 
     w = reopen(w)
 
-    assert w.get_preset() == before
-    assert w.effects.pitch_semitones == pytest.approx(-2.5)
-    assert w.effects.compressor_enabled
+    assert w.route.get_preset() == before
+    assert w.route.effects.pitch_semitones == pytest.approx(-2.5)
+    assert w.route.effects.compressor_enabled
     assert not w.audio_processor.routes[0].effects_enabled
     assert w.audio_processor.routes[0].chunk_size == 256
-    assert w.effects.pitch_num_voices == 6
-    assert w.compressor_ratio_slider.isEnabled()
+    assert w.route.effects.pitch_num_voices == 6
+    assert w.route.compressor_ratio_slider.isEnabled()
     assert w.status_label.text() == "Status: Stopped"
     w.close()
 
 
 def test_devices_survive_a_restart(qapp):
     w = MainWindow()
-    w.output_combo.setCurrentIndex(1)
+    w.route.output.device.setCurrentIndex(1)
 
     w = reopen(w)
 
-    assert w.input_combo.currentText() == "Microphone (USB Audio)"
-    assert w.output_combo.currentText() == "CABLE Input (VB-Audio Virtual Cable)"
+    assert w.route.input.device.currentText() == "Microphone (USB Audio)"
+    assert w.route.output.device.currentText() == "CABLE Input (VB-Audio Virtual Cable)"
     w.close()
 
 
 def test_devices_are_found_again_after_their_indexes_moved(qapp):
     w = MainWindow()
-    w.output_combo.setCurrentIndex(1)
+    w.route.output.device.setCurrentIndex(1)
     w.close()
     FakePyAudio.devices = [device("New Webcam Mic", WASAPI, inputs=1, outputs=0), *FakePyAudio.devices]
 
     w = MainWindow()
 
-    assert w.input_combo.currentText() == "Microphone (USB Audio)"
-    assert w.output_combo.currentText() == "CABLE Input (VB-Audio Virtual Cable)"
-    assert w.output_combo.currentData() == 5
+    assert w.route.input.device.currentText() == "Microphone (USB Audio)"
+    assert w.route.output.device.currentText() == "CABLE Input (VB-Audio Virtual Cable)"
+    assert w.route.output.device.currentData() == 5
     w.close()
 
 
 def test_show_all_devices_and_a_device_of_another_host_api_survive_a_restart(qapp):
     w = MainWindow()
-    w.show_all_devices_checkbox.setChecked(True)
-    w.input_combo.setCurrentIndex(0)
-    assert w.input_combo.currentText() == "Microphone (MME) [MME]"
+    w.route.show_all_devices_checkbox.setChecked(True)
+    w.route.input.device.setCurrentIndex(0)
+    assert w.route.input.device.currentText() == "Microphone (MME) [MME]"
 
     w = reopen(w)
 
-    assert w.show_all_devices_checkbox.isChecked()
-    assert w.input_combo.currentText() == "Microphone (MME) [MME]"
+    assert w.route.show_all_devices_checkbox.isChecked()
+    assert w.route.input.device.currentText() == "Microphone (MME) [MME]"
     w.close()
 
 
 def test_a_device_that_is_gone_is_mentioned_and_the_rest_is_restored(qapp):
     w = MainWindow()
-    w.output_combo.setCurrentIndex(1)
-    w.gain_slider.setValue(5)
+    w.route.output.device.setCurrentIndex(1)
+    w.route.gain_slider.setValue(5)
     w.close()
     FakePyAudio.devices = [d for d in FakePyAudio.devices if "CABLE" not in d["name"]]
 
     w = MainWindow()
 
-    assert w.output_combo.currentText() == "Speakers (Realtek)"
-    assert w.input_combo.currentText() == "Microphone (USB Audio)"
-    assert w.gain_slider.value() == 5
+    assert w.route.output.device.currentText() == "Speakers (Realtek)"
+    assert w.route.input.device.currentText() == "Microphone (USB Audio)"
+    assert w.route.gain_slider.value() == 5
     assert w.status_label.text() == "Status: Stopped (the output device used last time was not found)"
     w.close()
 
@@ -171,8 +171,8 @@ def test_unusable_settings_are_reported_and_defaults_are_used(qapp, settings_pat
     w = MainWindow()
 
     assert w.status_label.text() == f"Status: Your saved settings could not be restored: {reason}"
-    assert w.gain_slider.value() == 0
-    assert not w.show_all_devices_checkbox.isChecked()
+    assert w.route.gain_slider.value() == 0
+    assert not w.route.show_all_devices_checkbox.isChecked()
     w.close()
 
 
@@ -182,7 +182,7 @@ def test_settings_from_a_newer_version_still_load(qapp, settings_path):
 
     w = MainWindow()
 
-    assert w.gain_slider.value() == 4
+    assert w.route.gain_slider.value() == 4
     assert w.status_label.text() == "Status: Stopped"
     w.close()
 
@@ -199,11 +199,11 @@ def test_closing_works_even_if_settings_cannot_be_saved(qapp, tmp_path):
 
 def test_closing_twice_saves_once(qapp, settings_path):
     w = MainWindow()
-    w.gain_slider.setValue(3)
+    w.route.gain_slider.setValue(3)
     w.close()
     saved = settings_path.read_text()
 
-    w.gain_slider.setValue(9)
+    w.route.gain_slider.setValue(9)
     w.close()
 
     assert settings_path.read_text() == saved
@@ -212,7 +212,7 @@ def test_closing_twice_saves_once(qapp, settings_path):
 def test_an_explicit_settings_path_is_used(qapp, tmp_path, settings_path):
     path = tmp_path / "elsewhere.json"
     w = MainWindow(settings_path=path)
-    w.gain_slider.setValue(2)
+    w.route.gain_slider.setValue(2)
     w.close()
 
     assert json.loads(path.read_text())["preset"]["gain"] == 2

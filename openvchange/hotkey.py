@@ -25,8 +25,20 @@ MOD_NOREPEAT = 0x4000  # holding the keys down counts as one press
 WM_HOTKEY = 0x0312
 ERROR_HOTKEY_ALREADY_REGISTERED = 1409
 
-# Identifies our shortcut among the messages of this thread.
+# Identifies our first shortcut among the messages of this thread. Further shortcuts
+# take the ids that follow.
 HOTKEY_ID = 0x4F56
+
+_ids_in_use: set[int] = set()
+
+
+def _take_id() -> int:
+    """The lowest id that no live shortcut has."""
+    hotkey_id = HOTKEY_ID
+    while hotkey_id in _ids_in_use:
+        hotkey_id += 1
+    _ids_in_use.add(hotkey_id)
+    return hotkey_id
 
 # Keys whose Windows code is not simply their character.
 NAMED_KEYS = {
@@ -117,22 +129,26 @@ def default_backend() -> Backend | None:
 
 
 class _Listener(QAbstractNativeEventFilter):
-    """Watches the messages of the GUI thread for our shortcut."""
+    """Watches the messages of the GUI thread for one shortcut."""
 
-    def __init__(self, on_pressed) -> None:
+    def __init__(self, on_pressed, hotkey_id: int) -> None:
         super().__init__()
         self.on_pressed = on_pressed
+        self.hotkey_id = hotkey_id
 
     def nativeEventFilter(self, event_type, message):
         if bytes(event_type) == b"windows_generic_MSG":
             msg = wintypes.MSG.from_address(int(message))
-            if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
+            if msg.message == WM_HOTKEY and msg.wParam == self.hotkey_id:
                 self.on_pressed()
         return False, 0
 
 
 class GlobalHotkey(QObject):
-    """One shortcut that works system-wide. Emits `pressed`."""
+    """One shortcut that works system-wide. Emits `pressed`.
+
+    Each instance has an id of its own, so several can be in use at once.
+    """
 
     pressed = Signal()
 
@@ -140,9 +156,10 @@ class GlobalHotkey(QObject):
         super().__init__(parent)
         self.backend = backend if backend is not None else default_backend()
         self.sequence = QKeySequence()
+        self.hotkey_id = _take_id()
         self._listener = None
         if self.supported:
-            self._listener = _Listener(self.pressed.emit)
+            self._listener = _Listener(self.pressed.emit, self.hotkey_id)
             QCoreApplication.instance().installNativeEventFilter(self._listener)
 
     @property
@@ -164,10 +181,10 @@ class GlobalHotkey(QObject):
         previous = self.sequence
         self.clear()
         try:
-            self.backend.register(HOTKEY_ID, modifiers, key_code)
+            self.backend.register(self.hotkey_id, modifiers, key_code)
         except HotkeyError:
             if not previous.isEmpty():
-                self.backend.register(HOTKEY_ID, *to_windows(previous))
+                self.backend.register(self.hotkey_id, *to_windows(previous))
                 self.sequence = previous
             raise
         self.sequence = sequence
@@ -175,12 +192,13 @@ class GlobalHotkey(QObject):
     def clear(self) -> None:
         """Turn the shortcut off."""
         if self.backend is not None and not self.sequence.isEmpty():
-            self.backend.unregister(HOTKEY_ID)
+            self.backend.unregister(self.hotkey_id)
         self.sequence = QKeySequence()
 
     def close(self) -> None:
         """Give the shortcut back to the system. Safe to call more than once."""
         self.clear()
+        _ids_in_use.discard(self.hotkey_id)
         if self._listener is not None:
             app = QCoreApplication.instance()
             if app is not None:
